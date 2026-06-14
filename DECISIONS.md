@@ -23,3 +23,8 @@ the locked product decisions this build implements.
   down) to match the honest guarantee; `AEGIS_FAIL_CLOSED=1` opts into blocking.
   Real-binary resolution walks `$PATH`, skipping the shim dir and any entry that
   canonicalizes back to the shim.
+- P0.5: Claude Code hook maps Verdict to the PreToolUse protocol: Allow is
+  silent (Claude proceeds, event still logged), Deny -> permissionDecision
+  "deny", Hold -> "ask" (a hook cannot block interactively, so defer to the
+  user). Fail-open on parse errors / non-shell tools / daemon down. Added
+  `aegis_core::shell::split` (single/double quote + backslash aware).

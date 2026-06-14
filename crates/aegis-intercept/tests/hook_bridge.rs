@@ -1,0 +1,105 @@
+//! P0.5 acceptance: a Claude Code hook payload becomes a logged event tagged
+//! `agent = "claude-code"`, and the verdict maps to the hook protocol.
+#![cfg(unix)]
+
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::thread;
+
+use aegis_core::{Decision, EventLog};
+use aegis_daemon::{Daemon, Server};
+use aegis_intercept::hook::{handle, HookOutcome};
+
+fn serial_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+struct Harness {
+    _guard: MutexGuard<'static, ()>,
+    _tmp: tempfile::TempDir,
+    db: std::path::PathBuf,
+    server: Option<thread::JoinHandle<()>>,
+}
+
+fn start(requests: usize) -> Harness {
+    let guard = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_SOCKET", tmp.path().join("aegis.sock"));
+    std::env::set_var("AEGIS_DB", tmp.path().join("events.db"));
+    let db = tmp.path().join("events.db");
+
+    let db_for_thread = db.clone();
+    let server = Server::bind().unwrap();
+    let handle = thread::spawn(move || {
+        let daemon = Daemon::open(&db_for_thread).unwrap();
+        server.serve_n(requests, |cmd| daemon.handle(cmd)).unwrap();
+    });
+
+    Harness {
+        _guard: guard,
+        _tmp: tmp,
+        db,
+        server: Some(handle),
+    }
+}
+
+impl Harness {
+    fn join(&mut self) {
+        if let Some(h) = self.server.take() {
+            h.join().unwrap();
+        }
+    }
+}
+
+#[test]
+fn bash_hook_payload_is_logged_as_claude_code() {
+    let mut h = start(1);
+
+    let payload = r#"{
+        "session_id": "abc",
+        "cwd": "/home/dev/project",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "rm -rf build", "description": "clean" }
+    }"#;
+
+    // Phase 0 recorder allows everything → allow-silent outcome.
+    let outcome = handle(payload);
+    assert_eq!(
+        outcome,
+        HookOutcome {
+            stdout: None,
+            exit_code: 0
+        }
+    );
+
+    h.join();
+
+    let log = EventLog::open(&h.db).unwrap();
+    let tail = log.tail(10).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].agent, "claude-code");
+    assert_eq!(tail[0].command, "rm -rf build");
+    assert_eq!(tail[0].argv, vec!["rm", "-rf", "build"]);
+    assert_eq!(tail[0].cwd, "/home/dev/project");
+    assert_eq!(tail[0].decision, Decision::Allow);
+    assert!(log.verify_chain().unwrap().is_intact());
+}
+
+#[test]
+fn non_shell_tool_does_not_reach_the_daemon() {
+    // No daemon needed: an Edit tool call is allowed without any round-trip.
+    let _guard = serial_lock();
+    // Point at a socket that does not exist to prove we never connect.
+    std::env::set_var("AEGIS_SOCKET", "/nonexistent/aegis.sock");
+    let payload = r#"{"tool_name":"Edit","tool_input":{"file_path":"x"}}"#;
+    assert_eq!(
+        handle(payload),
+        HookOutcome {
+            stdout: None,
+            exit_code: 0
+        }
+    );
+}

@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod log;
+pub mod shell;
 pub mod types;
 
 pub use log::{ChainStatus, EventLog, LogError, LoggedEvent, GENESIS_HASH};

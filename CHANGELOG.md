@@ -27,6 +27,12 @@ All notable changes to Aegis are documented here. The format loosely follows
   the daemon is down. Tests: real `rm` deletes + logs + exit 0, non-zero exit
   propagation, stdout forwarding, plus unit tests for name/path resolution.
 
+- **P0.5** — `aegis-hook`: Claude Code `PreToolUse` hook bridge. Parses the hook
+  JSON, records shell commands tagged `agent = "claude-code"`, and maps the
+  verdict to Claude Code's permission protocol (allow→silent, deny→`deny`,
+  hold→`ask`). Fail-open on malformed payloads, non-shell tools, or a down
+  daemon. Adds `aegis_core::shell::split`, a quote-aware tokenizer.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

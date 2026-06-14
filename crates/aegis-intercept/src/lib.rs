@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod hook;
 pub mod shim;
 
 /// One trait, three impls (shim, hook, MCP). Each normalizes a source and runs.
