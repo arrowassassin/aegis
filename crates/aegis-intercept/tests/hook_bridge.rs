@@ -54,7 +54,7 @@ impl Harness {
 }
 
 #[test]
-fn bash_hook_payload_is_logged_as_claude_code() {
+fn safe_bash_hook_payload_is_logged_as_claude_code() {
     let mut h = start(1);
 
     let payload = r#"{
@@ -62,10 +62,10 @@ fn bash_hook_payload_is_logged_as_claude_code() {
         "cwd": "/home/dev/project",
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
-        "tool_input": { "command": "rm -rf build", "description": "clean" }
+        "tool_input": { "command": "git status", "description": "check" }
     }"#;
 
-    // Phase 0 recorder allows everything → allow-silent outcome.
+    // A safe command is allowed silently (Claude proceeds; the event is logged).
     let outcome = handle(payload);
     assert_eq!(
         outcome,
@@ -81,11 +81,33 @@ fn bash_hook_payload_is_logged_as_claude_code() {
     let tail = log.tail(10).unwrap();
     assert_eq!(tail.len(), 1);
     assert_eq!(tail[0].agent, "claude-code");
-    assert_eq!(tail[0].command, "rm -rf build");
-    assert_eq!(tail[0].argv, vec!["rm", "-rf", "build"]);
+    assert_eq!(tail[0].command, "git status");
+    assert_eq!(tail[0].argv, vec!["git", "status"]);
     assert_eq!(tail[0].cwd, "/home/dev/project");
     assert_eq!(tail[0].decision, Decision::Allow);
     assert!(log.verify_chain().unwrap().is_intact());
+}
+
+#[test]
+fn catastrophic_bash_hook_payload_is_held_as_ask() {
+    let mut h = start(1);
+
+    let payload = r#"{
+        "cwd": "/home/dev/project",
+        "tool_name": "Bash",
+        "tool_input": { "command": "rm -rf /" }
+    }"#;
+
+    // A catastrophic command is held → mapped to Claude Code's "ask".
+    let outcome = handle(payload);
+    let body: serde_json::Value = serde_json::from_str(outcome.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(body["hookSpecificOutput"]["permissionDecision"], "ask");
+
+    h.join();
+    let log = EventLog::open(&h.db).unwrap();
+    let tail = log.tail(1).unwrap();
+    assert_eq!(tail[0].decision, Decision::Hold);
+    assert_eq!(tail[0].class, aegis_core::Class::Catastrophic);
 }
 
 #[test]

@@ -14,7 +14,7 @@ pub mod ipc;
 
 use std::path::PathBuf;
 
-use aegis_core::{Class, Decision, EventLog, ProposedCommand, Verdict};
+use aegis_core::{EventLog, Mode, ProposedCommand, Verdict};
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 
@@ -36,6 +36,7 @@ pub fn default_db_path() -> PathBuf {
 /// The resident decision loop: owns the event log, classifies, records.
 pub struct Daemon {
     log: EventLog,
+    mode: Mode,
 }
 
 impl Daemon {
@@ -48,7 +49,10 @@ impl Daemon {
         }
         let log = EventLog::open(&db_path)
             .with_context(|| format!("open event log at {}", db_path.display()))?;
-        Ok(Self { log })
+        Ok(Self {
+            log,
+            mode: Mode::default(),
+        })
     }
 
     /// Open the daemon at the default database path.
@@ -56,16 +60,24 @@ impl Daemon {
         Self::open(default_db_path())
     }
 
-    /// Decide what to do with a proposed command (Tier-1 only in Phase 0/1).
+    /// Set the operating mode (attended / unattended / notify).
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// The current operating mode.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Decide what to do with a proposed command using the Tier-1 rule engine.
     ///
-    /// Phase 0 is a pure recorder: everything is allowed. Phase 1 replaces this
-    /// body with the deterministic rule engine. The model never decides here.
-    pub fn decide(&self, _cmd: &ProposedCommand) -> Verdict {
-        Verdict::rules(
-            Class::Safe,
-            Decision::Allow,
-            "recorder: allow-all (phase 0)",
-        )
+    /// The decision is deterministic — the model is never consulted here. In
+    /// attended mode (default) Safe is allowed and Catastrophic/Ambiguous are
+    /// held for a human.
+    pub fn decide(&self, cmd: &ProposedCommand) -> Verdict {
+        aegis_core::classify_and_decide(cmd, self.mode)
     }
 
     /// Handle one proposal: decide, record to the append-only log, return verdict.

@@ -54,6 +54,12 @@ All notable changes to Aegis are documented here. The format loosely follows
   cannot downgrade. Covered by unit tests, a ~70-command golden corpus with a
   zero-catastrophic-as-safe gate, and `proptest` invariants.
 
+- **P1.2** — Decision mapping wired into the daemon. `Daemon::decide` now runs
+  the Tier-1 rule engine for the configured `Mode` (default Attended:
+  Safe→Allow, Catastrophic→Hold, Ambiguous→Hold; Unattended:
+  Catastrophic/Ambiguous→Deny; Notify→Allow). Held commands pause and do not run
+  across the shim, hook (→`ask`), and MCP adapters.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

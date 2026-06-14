@@ -16,7 +16,7 @@ pub mod shell;
 pub mod types;
 
 pub use log::{ChainStatus, EventLog, LogError, LoggedEvent, GENESIS_HASH};
-pub use rules::{classify, classify_line, RuleMatch};
-pub use types::{Class, Decision, ProposedCommand, Verdict};
+pub use rules::{classify, classify_and_decide, classify_line, decide, RuleMatch};
+pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

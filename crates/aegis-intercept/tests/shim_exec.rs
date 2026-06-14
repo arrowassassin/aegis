@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 
-use aegis_core::{Decision, EventLog};
+use aegis_core::{Class, Decision, EventLog};
 use aegis_daemon::{Daemon, Server};
 
 fn serial_lock() -> MutexGuard<'static, ()> {
@@ -75,37 +75,40 @@ impl Harness {
 }
 
 #[test]
-fn shimmed_rm_deletes_file_logs_event_and_preserves_exit_code() {
+fn shimmed_catastrophic_rm_is_held_and_does_not_run() {
     let mut h = start(1, &["rm"]);
 
-    // A file to delete, in a working dir we run the command from.
+    // A directory the real rm -rf would destroy.
     let work = h.tmp.path().join("work");
     std::fs::create_dir_all(&work).unwrap();
-    let victim = work.join("tmpfile");
-    std::fs::write(&victim, b"bye").unwrap();
-    assert!(victim.exists());
+    let victim = work.join("data");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("keep.txt"), b"important").unwrap();
 
-    // Invoke the shim *as* rm (argv[0] basename = "rm").
+    // The shim has no TTY to approve on, so a held command must NOT run.
     let status = Command::new(h.shim_dir.join("rm"))
-        .arg("tmpfile")
+        .arg("-rf")
+        .arg("data")
         .current_dir(&work)
+        .stdin(std::process::Stdio::null())
         .env("PATH", h.shimmed_path())
         .env("AEGIS_SOCKET", h.tmp.path().join("aegis.sock"))
         .env("AEGIS_DB", &h.db)
         .status()
         .unwrap();
 
-    assert!(status.success(), "rm should succeed (exit 0)");
-    assert!(!victim.exists(), "file should be deleted by the real rm");
+    assert!(!status.success(), "a held command must not exit 0");
+    assert!(victim.exists(), "the directory must survive — rm was held");
 
     h.join();
 
     let log = EventLog::open(&h.db).unwrap();
     let tail = log.tail(10).unwrap();
-    assert_eq!(tail.len(), 1, "exactly one event recorded");
+    assert_eq!(tail.len(), 1);
     assert_eq!(tail[0].agent, "shim");
-    assert_eq!(tail[0].command, "rm tmpfile");
-    assert_eq!(tail[0].decision, Decision::Allow);
+    assert_eq!(tail[0].command, "rm -rf data");
+    assert_eq!(tail[0].class, Class::Catastrophic);
+    assert_eq!(tail[0].decision, Decision::Hold);
     assert!(log.verify_chain().unwrap().is_intact());
 }
 

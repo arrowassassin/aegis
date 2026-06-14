@@ -7,7 +7,7 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 
-use aegis_core::{Decision, EventLog, ProposedCommand};
+use aegis_core::{Class, Decision, EventLog, ProposedCommand};
 use aegis_daemon::{Client, Daemon, Server};
 
 /// Tests mutate process-global env vars (`AEGIS_SOCKET`/`AEGIS_DB`), so they must
@@ -62,31 +62,56 @@ impl Harness {
 }
 
 #[test]
-fn client_gets_allow_and_event_is_logged() {
+fn safe_command_is_allowed_and_logged() {
     let mut h = start(1);
 
     let cmd = ProposedCommand::new(
         "claude-code",
         "/tmp/project",
-        vec!["rm".into(), "tmpfile".into()],
-        "rm tmpfile",
+        vec!["ls".into(), "-la".into()],
+        "ls -la",
     );
     let verdict = Client::send(&cmd).unwrap();
 
-    // Phase 0 recorder: everything is allowed by Tier-1 rules.
+    // Tier-1 rules: a read-only command is allowed.
     assert_eq!(verdict.decision, Decision::Allow);
+    assert_eq!(verdict.class, Class::Safe);
     assert_eq!(verdict.tier, 1);
 
     h.join();
 
-    // The event made it into the append-only log, verbatim.
     let log = EventLog::open(&h.db).unwrap();
     let tail = log.tail(10).unwrap();
     assert_eq!(tail.len(), 1);
-    assert_eq!(tail[0].command, "rm tmpfile");
+    assert_eq!(tail[0].command, "ls -la");
     assert_eq!(tail[0].agent, "claude-code");
     assert_eq!(tail[0].decision, Decision::Allow);
     assert!(log.verify_chain().unwrap().is_intact());
+}
+
+#[test]
+fn catastrophic_command_is_held() {
+    let mut h = start(1);
+
+    let cmd = ProposedCommand::new(
+        "shim",
+        "/tmp/project",
+        vec!["rm".into(), "-rf".into(), "/".into()],
+        "rm -rf /",
+    );
+    let verdict = Client::send(&cmd).unwrap();
+
+    // The security spine: a catastrophic command is held, never auto-allowed.
+    assert_eq!(verdict.decision, Decision::Hold);
+    assert_eq!(verdict.class, Class::Catastrophic);
+    assert_eq!(verdict.tier, 1);
+
+    h.join();
+
+    let log = EventLog::open(&h.db).unwrap();
+    let tail = log.tail(1).unwrap();
+    assert_eq!(tail[0].decision, Decision::Hold);
+    assert_eq!(tail[0].class, Class::Catastrophic);
 }
 
 #[test]

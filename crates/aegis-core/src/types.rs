@@ -95,6 +95,31 @@ impl std::fmt::Display for Class {
     }
 }
 
+/// Operating mode that governs how a class maps to a decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Hold dangerous/ambiguous ops and wait for a one-key human decision.
+    #[default]
+    Attended,
+    /// No human present: catastrophic auto-denies (hard floor); ambiguous is
+    /// scored by the model (P2) or, rules-only, defaults to the safe side (deny).
+    Unattended,
+    /// Record and warn, never block (visibility-first).
+    Notify,
+}
+
+impl Mode {
+    /// Stable lowercase token.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Attended => "attended",
+            Mode::Unattended => "unattended",
+            Mode::Notify => "notify",
+        }
+    }
+}
+
 /// What Aegis decided to do with the command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

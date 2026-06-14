@@ -100,13 +100,14 @@ fn aegis_exec_reports_nonzero_exit_as_error() {
     let mut h = start(1);
     let work = h.tmp.path().to_string_lossy().to_string();
 
+    // A safe command (grep) that exits non-zero: allowed, runs, reports the code.
     let req = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 8,
         "method": "tools/call",
         "params": {
             "name": "aegis-exec",
-            "arguments": { "command": "exit 3", "cwd": work }
+            "arguments": { "command": "grep __no_such_token__ /dev/null", "cwd": work }
         }
     })
     .to_string();
@@ -116,7 +117,7 @@ fn aegis_exec_reports_nonzero_exit_as_error() {
     assert!(resp["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
-        .contains("exit code: 3"));
+        .contains("exit code: 1"));
 
     h.join();
     // The command (agent defaults to "mcp") is still recorded.

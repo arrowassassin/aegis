@@ -14,7 +14,7 @@
 //! it is deterministic and trivially testable.
 
 use crate::shell;
-use crate::types::{Class, ProposedCommand};
+use crate::types::{Class, Decision, Mode, ProposedCommand, Verdict};
 
 /// The result of classifying a command: its class and the rule that decided it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +37,33 @@ impl RuleMatch {
 /// Classify a proposed command. Always returns; never panics.
 pub fn classify(cmd: &ProposedCommand) -> RuleMatch {
     classify_line(&cmd.raw)
+}
+
+/// Map a class to a decision for the given mode (Tier-1, rules-only).
+///
+/// Security spine: catastrophic is never `Allow`. In attended mode dangerous and
+/// ambiguous commands are held; in unattended mode catastrophic is a hard
+/// auto-deny and ambiguous defaults to the safe side (deny) until the Phase-2
+/// model can score it — and the model may then only *add* caution.
+pub fn decide(class: Class, mode: Mode) -> Decision {
+    match mode {
+        Mode::Attended => match class {
+            Class::Safe => Decision::Allow,
+            Class::Catastrophic | Class::Ambiguous => Decision::Hold,
+        },
+        Mode::Unattended => match class {
+            Class::Safe => Decision::Allow,
+            Class::Catastrophic | Class::Ambiguous => Decision::Deny,
+        },
+        Mode::Notify => Decision::Allow,
+    }
+}
+
+/// Classify a command and produce a full Tier-1 verdict for the given mode.
+pub fn classify_and_decide(cmd: &ProposedCommand, mode: Mode) -> Verdict {
+    let m = classify(cmd);
+    let decision = decide(m.class, mode);
+    Verdict::rules(m.class, decision, m.rule)
 }
 
 /// Classify a raw command line (the entry point used by tests too).

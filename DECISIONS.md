@@ -44,3 +44,7 @@ the locked product decisions this build implements.
   the worst class wins; `sudo`/`doas`/env-assignment prefixes are stripped so
   they cannot mask a catastrophic program. No I/O, so it stays deterministic.
   Zero-catastrophic-as-safe is enforced as a hard test gate.
+- P1.2: Class->Decision mapping lives in `aegis_core::rules::decide(class,
+  mode)` so it is one source of truth across daemon and adapters. Attended holds
+  catastrophic+ambiguous; unattended hard-denies catastrophic and (rules-only,
+  pre-model) denies ambiguous on the safe side; notify always allows+records.
