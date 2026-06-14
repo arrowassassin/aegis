@@ -1,0 +1,12 @@
+[package]
+name = "aegis-tui"
+description = "Aegis ratatui terminal UI. Created empty in Phase 0/1; the real timeline lands in Phase 4."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aegis-core.workspace = true
