@@ -70,6 +70,13 @@ All notable changes to Aegis are documented here. The format loosely follows
   remembered command auto-allows next time and is logged as `memory:allow`. The
   repo key is the nearest ancestor `.git` directory.
 
+- **P1.5** — Policy files. `aegis-core::policy` parses `.aegis.toml` (mode +
+  allow/deny rules with glob/prefix matching), merges global ← repo, and applies
+  it to a verdict: `deny` escalates (Attended→Hold, Unattended→Deny), `allow`
+  tames the ambiguous band but never downgrades a catastrophic block. The daemon
+  loads the nearest `.aegis.toml` and global config (`AEGIS_CONFIG` override) per
+  command. Documented in `docs/policy.md`.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

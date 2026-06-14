@@ -56,3 +56,9 @@ the locked product decisions this build implements.
   memory:allow — is auditable. Decision memory is mutable state in the same DB,
   keyed by (repo-root, exact-command-hash); consulted before rules, allow-only
   in spirit but supports always-deny too. Memory never erases the rule class.
+- P1.5: Decision precedence is rules -> policy -> memory, with policy able to
+  set the effective mode per repo. Policy `allow` is deliberately NOT allowed to
+  downgrade a catastrophic rule classification (static config must not unlock the
+  hard floor); only an in-the-moment human `[r]` / explicit memory can. Policy
+  files are discovered by walking up from cwd for `.aegis.toml`; global config
+  path is overridable via AEGIS_CONFIG for hermetic tests.

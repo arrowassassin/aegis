@@ -73,18 +73,29 @@ impl Daemon {
 
     /// Decide what to do with a proposed command.
     ///
-    /// Decision memory is consulted first (a per-repo always-allow / always-deny
-    /// for the exact command), then the Tier-1 rule engine. The decision is
-    /// deterministic — the model is never consulted here. In attended mode
-    /// (default) Safe is allowed and Catastrophic/Ambiguous are held for a human.
+    /// Order: (1) load the effective policy (global ← repo) which may set the
+    /// mode; (2) classify with the Tier-1 rule engine; (3) apply policy allow/deny
+    /// (escalation always allowed, never a catastrophic downgrade); (4) apply
+    /// decision memory (a human's prior choice for this exact command in this
+    /// repo). The decision is deterministic — the model is never consulted here.
     ///
-    /// Security spine: memory can record an always-**allow**, but the rule engine
-    /// still classifies the command, so a remembered allow never erases the fact
-    /// that it was, say, catastrophic — it only changes the decision the human
-    /// already made for this exact command in this repo.
+    /// Security spine: the rule engine always classifies, so neither policy nor
+    /// memory erases the fact that a command was, say, catastrophic — they only
+    /// change the recorded decision a human already authorized.
     pub fn decide(&self, cmd: &ProposedCommand) -> Verdict {
-        let mut verdict = aegis_core::classify_and_decide(cmd, self.mode);
+        // Policy first: it may set the effective mode and add allow/deny rules.
+        let policy = load_policy(&cmd.cwd);
+        let mode = policy.mode.unwrap_or(self.mode);
 
+        let mut verdict = aegis_core::classify_and_decide(cmd, mode);
+
+        // Per-repo policy rules can escalate (deny) or tame (allow) the verdict —
+        // but never downgrade a catastrophic block.
+        let action = policy.action_for(&cmd.raw);
+        verdict = aegis_core::adjust_for_policy(verdict, action, mode);
+
+        // Decision memory has the final say (a human's prior choice for this
+        // exact command in this repo).
         let repo = repo_key(&cmd.cwd);
         let hash = aegis_core::command_hash(&cmd.raw);
         match self.log.memory_lookup(&repo, &hash) {
@@ -152,6 +163,54 @@ impl Daemon {
     /// Borrow the underlying event log (read-only queries).
     pub fn log(&self) -> &EventLog {
         &self.log
+    }
+}
+
+/// Load and merge the effective policy for a command's working directory:
+/// global defaults (config dir) overridden by the repo's `.aegis.toml`.
+pub fn load_policy(cwd: &std::path::Path) -> aegis_core::Policy {
+    let global = read_policy_file(&global_policy_path()).unwrap_or_default();
+    let repo = find_repo_policy(cwd)
+        .and_then(|p| read_policy_file(&p))
+        .unwrap_or_default();
+    aegis_core::Policy::merge(global, repo)
+}
+
+/// Path to the global policy file. Override with `AEGIS_CONFIG` (used in tests).
+fn global_policy_path() -> PathBuf {
+    if let Ok(p) = std::env::var("AEGIS_CONFIG") {
+        return PathBuf::from(p);
+    }
+    if let Some(dirs) = ProjectDirs::from("", "", "aegis") {
+        return dirs.config_dir().join("config.toml");
+    }
+    std::env::temp_dir().join("aegis-config.toml")
+}
+
+/// Find the nearest `.aegis.toml` from `cwd` upward.
+fn find_repo_policy(cwd: &std::path::Path) -> Option<PathBuf> {
+    let mut dir = Some(cwd);
+    while let Some(d) = dir {
+        let candidate = d.join(".aegis.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+fn read_policy_file(path: &std::path::Path) -> Option<aegis_core::Policy> {
+    let text = std::fs::read_to_string(path).ok()?;
+    match aegis_core::Policy::parse(&text) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!(
+                "aegis-daemon: ignoring invalid policy {}: {e}",
+                path.display()
+            );
+            None
+        }
     }
 }
 
