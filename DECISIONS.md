@@ -38,3 +38,9 @@ the locked product decisions this build implements.
   set into a shim dir the user prepends to PATH. `aegis log` is calm by design:
   outcome words (allowed/denied/held) not color alone, one reserved accent for
   danger, NO_COLOR respected. Phase 0 (Recorder) complete.
+- P1.1: The classifier is intentionally conservative — catastrophic checks run
+  first and broadly, only confidently read-only/build/test commands are Safe,
+  everything else is Ambiguous. Chained lines are segmented (quote-aware) and
+  the worst class wins; `sudo`/`doas`/env-assignment prefixes are stripped so
+  they cannot mask a catastrophic program. No I/O, so it stays deterministic.
+  Zero-catastrophic-as-safe is enforced as a hard test gate.

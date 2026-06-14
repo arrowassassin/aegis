@@ -24,3 +24,4 @@ directories.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 rusqlite.workspace = true
+proptest = "1.11.0"

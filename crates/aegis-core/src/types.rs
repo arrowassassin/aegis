@@ -68,6 +68,25 @@ impl Class {
             Class::Ambiguous => "ambiguous",
         }
     }
+
+    /// Severity rank: `Safe < Ambiguous < Catastrophic`. Used to take the worst
+    /// class across the segments of a chained command line.
+    pub fn severity(self) -> u8 {
+        match self {
+            Class::Safe => 0,
+            Class::Ambiguous => 1,
+            Class::Catastrophic => 2,
+        }
+    }
+
+    /// The more severe of two classes.
+    pub fn max(self, other: Class) -> Class {
+        if other.severity() > self.severity() {
+            other
+        } else {
+            self
+        }
+    }
 }
 
 impl std::fmt::Display for Class {

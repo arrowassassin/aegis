@@ -45,6 +45,15 @@ All notable changes to Aegis are documented here. The format loosely follows
   calm timeline — outcome words not just color, one reserved accent, `NO_COLOR`
   respected, designed empty state). Completes **Phase 0 — Recorder**.
 
+- **P1.1** — `aegis-core::rules`: the Tier-1 deterministic rule engine.
+  Classifies a command into Safe / Catastrophic / Ambiguous with no I/O and no
+  model. Segments chained command lines (`;`, `&&`, `||`, `|`) honoring quotes
+  and takes the worst class; catastrophic checks run first and broadly (rm -rf,
+  force-push/history-rewrite, destructive SQL, infra teardown, disk writes,
+  secret reads, curl|sh, fork bombs); strips `sudo`/`doas`/env prefixes so they
+  cannot downgrade. Covered by unit tests, a ~70-command golden corpus with a
+  zero-catastrophic-as-safe gate, and `proptest` invariants.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.
