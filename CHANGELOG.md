@@ -77,6 +77,11 @@ All notable changes to Aegis are documented here. The format loosely follows
   loads the nearest `.aegis.toml` and global config (`AEGIS_CONFIG` override) per
   command. Documented in `docs/policy.md`.
 
+- **P1.6** — Latency guard. Benchmark tests assert the deterministic rules path
+  is microsecond-scale (~3µs/call) and a Safe-command round-trip through the
+  daemon (classify + log + IPC) is sub-millisecond on a warm daemon (~350µs).
+  The event log now runs SQLite with `synchronous=NORMAL` under WAL.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

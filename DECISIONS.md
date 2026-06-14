@@ -62,3 +62,7 @@ the locked product decisions this build implements.
   hard floor); only an in-the-moment human `[r]` / explicit memory can. Policy
   files are discovered by walking up from cwd for `.aegis.toml`; global config
   path is overridable via AEGIS_CONFIG for hermetic tests.
+- P1.6: SQLite runs WAL + synchronous=NORMAL so per-event logging does not
+  fsync on every commit (keeps the round-trip sub-ms); a crash can only lose the
+  last few transactions and the surviving hash chain stays verifiable. Measured:
+  rules classify ~3.5us, safe daemon round-trip ~345us.

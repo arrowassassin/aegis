@@ -109,6 +109,10 @@ impl EventLog {
 
     fn init(conn: Connection) -> Result<Self, LogError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // NORMAL is safe under WAL and keeps per-event writes fast (no fsync per
+        // commit). A crash can only lose the very last transactions; the surviving
+        // chain stays intact and verifiable.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(
             r#"
