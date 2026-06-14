@@ -17,3 +17,9 @@ the locked product decisions this build implements.
   (Unix path / Windows namespaced pipe). The daemon serves connections
   sequentially because the SQLite event-log connection is single-threaded and
   each request is sub-millisecond; the client blocks on the response.
+- P0.4: The shim execs the real binary via Unix `exec()` (process image
+  replacement) for exact exit-code/stdio/signal fidelity; Windows spawns and
+  propagates the code. Fail-open by default (record-but-run when the daemon is
+  down) to match the honest guarantee; `AEGIS_FAIL_CLOSED=1` opts into blocking.
+  Real-binary resolution walks `$PATH`, skipping the shim dir and any entry that
+  canonicalizes back to the shim.

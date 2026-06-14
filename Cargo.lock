@@ -59,6 +59,7 @@ name = "aegis-intercept"
 version = "0.1.0"
 dependencies = [
  "aegis-core",
+ "aegis-daemon",
  "anyhow",
  "interprocess",
  "serde",

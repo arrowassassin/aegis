@@ -20,6 +20,13 @@ All notable changes to Aegis are documented here. The format loosely follows
   Tier-1 rules plug into `Daemon::decide` in Phase 1. Integration tests cover a
   client round-trip and multi-command log chaining.
 
+- **P0.4** — `aegis-shim`: the `$PATH` interception shim. Symlinked as `rm`,
+  `git`, etc., it captures argv+cwd, consults the daemon, and on allow execs the
+  real binary (Unix `exec`, so exit code, stdio, and signals are forwarded with
+  perfect fidelity). Fail-open by default; `AEGIS_FAIL_CLOSED=1` to block when
+  the daemon is down. Tests: real `rm` deletes + logs + exit 0, non-zero exit
+  propagation, stdout forwarding, plus unit tests for name/path resolution.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.
