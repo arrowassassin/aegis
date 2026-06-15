@@ -19,7 +19,12 @@ pub fn render(raw: &str, verdict: &Verdict, color: bool) -> String {
         Class::Ambiguous => (ACCENT, "This command needs your decision."),
         Class::Safe => (ACCENT, "This command is held."),
     };
-    let reason = friendly_reason(&verdict.reason);
+    // Prefer the model's one-line summary (Phase 2); fall back to the rule phrase.
+    let reason = verdict
+        .summary
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| friendly_reason(&verdict.reason));
 
     let mut out = String::new();
     let bar = "─".repeat(60);
@@ -40,6 +45,10 @@ pub fn render(raw: &str, verdict: &Verdict, color: bool) -> String {
         out.push_str(&paint(&format!("  {reason}"), DIM));
         out.push('\n');
     }
+    if let Some(risk) = verdict.risk {
+        out.push_str(&paint(&format!("  risk {}", risk_bar(risk)), DIM));
+        out.push('\n');
+    }
     out.push('\n');
     // The raw command, verbatim, in a quiet indented block.
     out.push_str("    ");
@@ -51,6 +60,13 @@ pub fn render(raw: &str, verdict: &Verdict, color: bool) -> String {
     out.push_str(&paint(&bar, DIM));
     out.push('\n');
     out
+}
+
+/// A 10-cell risk meter plus the numeric score (text, never color-only).
+fn risk_bar(risk: u8) -> String {
+    let filled = (risk as usize * 10 / 100).min(10);
+    let meter: String = "█".repeat(filled) + &"░".repeat(10 - filled);
+    format!("[{meter}] {risk}/100")
 }
 
 /// Turn a terse rule id into a short human phrase for the card.
@@ -127,5 +143,22 @@ mod tests {
     fn friendly_reason_explains_known_rules() {
         assert!(!friendly_reason("terraform:destroy").is_empty());
         assert!(friendly_reason("ambiguous:python").is_empty());
+    }
+
+    #[test]
+    fn card_prefers_model_summary_and_shows_risk() {
+        let mut v = Verdict::rules(Class::Ambiguous, Decision::Hold, "ambiguous:make");
+        v.summary = Some("Builds and deploys the project.".into());
+        v.risk = Some(70);
+        let card = render("make deploy", &v, false);
+        assert!(card.contains("Builds and deploys the project."));
+        assert!(card.contains("70/100"));
+    }
+
+    #[test]
+    fn risk_bar_is_clamped() {
+        assert!(risk_bar(0).contains("0/100"));
+        assert!(risk_bar(100).contains("100/100"));
+        assert!(risk_bar(200).contains("200/100")); // numeric passthrough, bar capped
     }
 }

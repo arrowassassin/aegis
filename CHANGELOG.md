@@ -89,6 +89,17 @@ All notable changes to Aegis are documented here. The format loosely follows
   tape (`scripts/demo.tape`) and capture instructions live in `docs/demo.md`.
   Completes **Phase 1 — Gate**.
 
+- **Phase 2** — `aegis-model` real implementation. A warm Tier-2 `Scorer` kept in
+  the daemon fills `summary` + `risk` for the ambiguous band and drives graduated
+  unattended mode (`risk` vs per-repo `threshold`). `HeuristicScorer` is the
+  default, dependency-free, always-available backend (and graceful-degradation
+  path); `LlamaScorer` (feature `llama`) does real CPU GGUF inference via
+  `llama.cpp`. Pinned+checksummed weight management with RAM-based 3B/1.5B
+  auto-selection (feature `download` for the fetch — the only network egress).
+  The hold card now shows the model summary and a risk meter. Catastrophic stays
+  a hard floor regardless of score; Safe stays on the model-free fast path.
+  Documented in `docs/model.md`.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

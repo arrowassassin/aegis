@@ -78,3 +78,10 @@ the locked product decisions this build implements.
   Sub-90% remainder is concentrated in process-replacement (`exec`) and the
   detached-daemon spawn paths, which are exercised by the demo + integration
   tests rather than unit-covered; the thin bin wrappers just call lib functions.
+- Phase 2: model is explain+score only. HeuristicScorer is the default and the
+  degradation path; real GGUF inference (LlamaScorer) is behind feature `llama`
+  and weight download behind `download`, so the default build stays offline and
+  toolchain-free and CI stays green. Weights are SHA-256-pinned (unpinned specs
+  refused). Graduated unattended uses policy.threshold (default 50). Catastrophic
+  is never scored into an allow; Safe is never scored at all (fast path). The
+  llama backend targets llama-cpp-2 0.1.x and is the one path not CI-compiled.

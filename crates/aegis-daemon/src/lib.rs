@@ -33,10 +33,12 @@ pub fn default_db_path() -> PathBuf {
     std::env::temp_dir().join("aegis-events.db")
 }
 
-/// The resident decision loop: owns the event log, classifies, records.
+/// The resident decision loop: owns the event log, the warm scorer, classifies,
+/// records.
 pub struct Daemon {
     log: EventLog,
     mode: Mode,
+    scorer: Box<dyn aegis_model::Scorer>,
 }
 
 impl Daemon {
@@ -52,7 +54,19 @@ impl Daemon {
         Ok(Self {
             log,
             mode: Mode::default(),
+            scorer: aegis_model::default_scorer(),
         })
+    }
+
+    /// Swap in a specific scorer (used by tests).
+    pub fn with_scorer(mut self, scorer: Box<dyn aegis_model::Scorer>) -> Self {
+        self.scorer = scorer;
+        self
+    }
+
+    /// The name of the active Tier-2 scorer backend.
+    pub fn scorer_name(&self) -> &str {
+        self.scorer.name()
     }
 
     /// Open the daemon at the default database path.
@@ -73,29 +87,58 @@ impl Daemon {
 
     /// Decide what to do with a proposed command.
     ///
-    /// Order: (1) load the effective policy (global ← repo) which may set the
-    /// mode; (2) classify with the Tier-1 rule engine; (3) apply policy allow/deny
-    /// (escalation always allowed, never a catastrophic downgrade); (4) apply
-    /// decision memory (a human's prior choice for this exact command in this
-    /// repo). The decision is deterministic — the model is never consulted here.
+    /// Order: (1) load the effective policy (global ← repo) which may set the mode
+    /// and risk threshold; (2) classify with the Tier-1 rule engine; (3) **Tier-2
+    /// model** — for the ambiguous band only, fill `summary`+`risk` and, in
+    /// unattended mode, apply the graduated threshold (below → allow, at/above →
+    /// deny); the model summarizes a catastrophic command for the hold card but
+    /// never changes its decision; (4) apply policy allow/deny (never a
+    /// catastrophic downgrade); (5) apply decision memory.
     ///
-    /// Security spine: the rule engine always classifies, so neither policy nor
-    /// memory erases the fact that a command was, say, catastrophic — they only
-    /// change the recorded decision a human already authorized.
+    /// Security spine: rules classify; the model only explains and scores the
+    /// ambiguous band, and its influence is escalation-only. Safe stays on the
+    /// model-free fast path.
     pub fn decide(&self, cmd: &ProposedCommand) -> Verdict {
-        // Policy first: it may set the effective mode and add allow/deny rules.
         let policy = load_policy(&cmd.cwd);
         let mode = policy.mode.unwrap_or(self.mode);
 
-        let mut verdict = aegis_core::classify_and_decide(cmd, mode);
+        let m = aegis_core::classify(cmd);
+        let mut verdict = Verdict::rules(m.class, aegis_core::decide(m.class, mode), &m.rule);
 
-        // Per-repo policy rules can escalate (deny) or tame (allow) the verdict —
-        // but never downgrade a catastrophic block.
+        // Tier-2 model: ambiguous band gets summary + risk (+ graduated decision);
+        // catastrophic gets a summary for the hold card. Safe is never scored.
+        match m.class {
+            aegis_core::Class::Ambiguous => {
+                let out = self.scorer.score(cmd, m.class, &m.rule);
+                verdict.summary = Some(out.summary);
+                verdict.risk = Some(out.risk);
+                verdict.tier = 2;
+                if mode == Mode::Unattended {
+                    let threshold = policy.risk_threshold();
+                    verdict.decision = if out.risk >= threshold {
+                        Decision::Deny
+                    } else {
+                        Decision::Allow
+                    };
+                    verdict.reason = format!(
+                        "model:risk={} vs threshold={} ({})",
+                        out.risk, threshold, m.rule
+                    );
+                }
+            }
+            aegis_core::Class::Catastrophic => {
+                let out = self.scorer.score(cmd, m.class, &m.rule);
+                verdict.summary = Some(out.summary);
+                verdict.tier = 2;
+            }
+            aegis_core::Class::Safe => {}
+        }
+
+        // Policy can escalate (deny) or tame (allow) — never downgrade catastrophic.
         let action = policy.action_for(&cmd.raw);
         verdict = aegis_core::adjust_for_policy(verdict, action, mode);
 
-        // Decision memory has the final say (a human's prior choice for this
-        // exact command in this repo).
+        // Decision memory has the final say.
         let repo = repo_key(&cmd.cwd);
         let hash = aegis_core::command_hash(&cmd.raw);
         match self.log.memory_lookup(&repo, &hash) {

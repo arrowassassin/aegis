@@ -19,10 +19,17 @@ pub struct Policy {
     /// Optional operating mode for this scope.
     #[serde(default)]
     pub mode: Option<Mode>,
+    /// Risk threshold (0..=100) for the graduated unattended band: an ambiguous
+    /// command scored at/above this is denied+queued, below it is allowed.
+    #[serde(default)]
+    pub threshold: Option<u8>,
     /// Allow/deny rule lists.
     #[serde(default)]
     pub rules: Rules,
 }
+
+/// Default risk threshold for the ambiguous band when none is configured.
+pub const DEFAULT_THRESHOLD: u8 = 50;
 
 /// The allow/deny rule lists.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -62,8 +69,14 @@ impl Policy {
         deny.extend(repo.rules.deny);
         Policy {
             mode: repo.mode.or(global.mode),
+            threshold: repo.threshold.or(global.threshold),
             rules: Rules { allow, deny },
         }
+    }
+
+    /// The effective risk threshold for the ambiguous band.
+    pub fn risk_threshold(&self) -> u8 {
+        self.threshold.unwrap_or(DEFAULT_THRESHOLD)
     }
 
     /// Decide what this policy says about a command. Deny wins over allow.
@@ -205,12 +218,14 @@ mod tests {
     fn deny_takes_precedence_over_allow() {
         let p = Policy {
             mode: None,
+            threshold: None,
             rules: Rules {
                 allow: vec!["deploy".into()],
                 deny: vec!["deploy".into()],
             },
         };
         assert_eq!(p.action_for("deploy now"), PolicyAction::Deny);
+        assert_eq!(p.risk_threshold(), DEFAULT_THRESHOLD);
     }
 
     #[test]

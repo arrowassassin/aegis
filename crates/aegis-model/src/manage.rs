@@ -1,0 +1,217 @@
+//! Model weight management: pinned specs, RAM-based selection, checksum
+//! verification, and (feature `download`) the single permitted network fetch.
+//!
+//! Security spine: weights are **pinned by SHA-256**. A spec with an empty hash is
+//! treated as not-yet-pinned and refused, so Aegis never loads an unverified blob.
+//! The download is the only network egress Aegis ever performs.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, Result};
+use sha2::{Digest, Sha256};
+
+/// A pinned model: where to fetch it, its checksum, and the RAM it needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSpec {
+    /// Stable id, e.g. `"qwen2.5-3b-instruct-q4_k_m"`.
+    pub id: &'static str,
+    /// File name on disk.
+    pub file: &'static str,
+    /// Pinned download URL (empty until pinned for a release).
+    pub url: &'static str,
+    /// Pinned SHA-256 of the file (empty until pinned — refused if empty).
+    pub sha256: &'static str,
+    /// Approximate download size in bytes (for UX).
+    pub size_bytes: u64,
+    /// Minimum total system RAM (MB) to prefer this model.
+    pub min_ram_mb: u64,
+}
+
+impl ModelSpec {
+    /// Whether this spec has a real checksum pinned.
+    pub fn is_pinned(&self) -> bool {
+        self.sha256.len() == 64
+    }
+}
+
+/// Default 3B Q4_K_M model. URL/sha must be pinned before enabling `download`.
+pub const MODEL_3B: ModelSpec = ModelSpec {
+    id: "qwen2.5-3b-instruct-q4_k_m",
+    file: "qwen2.5-3b-instruct-q4_k_m.gguf",
+    url: "",
+    sha256: "",
+    size_bytes: 2_100_000_000,
+    min_ram_mb: 6_000,
+};
+
+/// Low-RAM 1.5B fallback. URL/sha must be pinned before enabling `download`.
+pub const MODEL_1_5B: ModelSpec = ModelSpec {
+    id: "qwen2.5-1.5b-instruct-q4_k_m",
+    file: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    url: "",
+    sha256: "",
+    size_bytes: 1_100_000_000,
+    min_ram_mb: 0,
+};
+
+/// Choose the largest model that comfortably fits in the available RAM.
+pub fn select_spec(ram_mb: u64) -> &'static ModelSpec {
+    if ram_mb >= MODEL_3B.min_ram_mb {
+        &MODEL_3B
+    } else {
+        &MODEL_1_5B
+    }
+}
+
+/// Best-effort total system RAM in MB. Falls back to a conservative 4096.
+pub fn detect_ram_mb() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(text) = std::fs::read_to_string("/proc/meminfo") {
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("MemTotal:") {
+                    if let Some(kb) = rest.split_whitespace().next() {
+                        if let Ok(kb) = kb.parse::<u64>() {
+                            return kb / 1024;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+        {
+            if let Ok(s) = String::from_utf8(out.stdout) {
+                if let Ok(bytes) = s.trim().parse::<u64>() {
+                    return bytes / (1024 * 1024);
+                }
+            }
+        }
+    }
+    4096
+}
+
+/// Compute the SHA-256 of a file as a lowercase hex string.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Verify a file matches the spec's pinned checksum.
+pub fn verify(spec: &ModelSpec, path: &Path) -> Result<bool> {
+    if !spec.is_pinned() {
+        bail!(
+            "model {} has no pinned checksum; refusing to use it",
+            spec.id
+        );
+    }
+    Ok(sha256_file(path)?.eq_ignore_ascii_case(spec.sha256))
+}
+
+/// Ensure the weights for `spec` exist and verify under `dir`, returning the path.
+///
+/// If the file is missing and the `download` feature is enabled, fetch it from the
+/// pinned URL and verify the checksum before returning. Without the feature, a
+/// missing file is an error (the caller should fall back to the heuristic scorer).
+pub fn ensure_weights(spec: &ModelSpec, dir: &Path) -> Result<PathBuf> {
+    if !spec.is_pinned() {
+        bail!(
+            "model {} is not pinned (set its url + sha256 before download)",
+            spec.id
+        );
+    }
+    let path = dir.join(spec.file);
+    if path.is_file() {
+        if verify(spec, &path)? {
+            return Ok(path);
+        }
+        bail!("checksum mismatch for {}", path.display());
+    }
+
+    #[cfg(feature = "download")]
+    {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        download(spec, &path)?;
+        if !verify(spec, &path)? {
+            let _ = std::fs::remove_file(&path);
+            bail!("downloaded weights failed checksum for {}", spec.id);
+        }
+        return Ok(path);
+    }
+    #[cfg(not(feature = "download"))]
+    {
+        bail!(
+            "weights for {} not present at {} (build with --features download to fetch)",
+            spec.id,
+            path.display()
+        )
+    }
+}
+
+/// Download the weights from the pinned URL (the only permitted network egress).
+#[cfg(feature = "download")]
+fn download(spec: &ModelSpec, dest: &Path) -> Result<()> {
+    if spec.url.is_empty() {
+        bail!("model {} has no pinned URL", spec.id);
+    }
+    let resp = reqwest::blocking::get(spec.url)
+        .with_context(|| format!("GET {}", spec.url))?
+        .error_for_status()?;
+    let bytes = resp.bytes()?;
+    std::fs::write(dest, &bytes).with_context(|| format!("write {}", dest.display()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selects_3b_with_enough_ram_else_1_5b() {
+        assert_eq!(select_spec(16_000).id, MODEL_3B.id);
+        assert_eq!(select_spec(6_000).id, MODEL_3B.id);
+        assert_eq!(select_spec(4_000).id, MODEL_1_5B.id);
+        assert_eq!(select_spec(0).id, MODEL_1_5B.id);
+    }
+
+    #[test]
+    fn detect_ram_is_positive() {
+        assert!(detect_ram_mb() > 0);
+    }
+
+    #[test]
+    fn unpinned_specs_are_refused() {
+        // Default specs ship unpinned; using them must error, not load a blob.
+        assert!(!MODEL_3B.is_pinned());
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(ensure_weights(&MODEL_3B, tmp.path()).is_err());
+        assert!(verify(&MODEL_3B, tmp.path()).is_err());
+    }
+
+    #[test]
+    fn checksum_roundtrip_and_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("blob.bin");
+        std::fs::write(&f, b"hello aegis").unwrap();
+        let digest = sha256_file(&f).unwrap();
+        assert_eq!(digest.len(), 64);
+
+        // A spec pinned to the real digest verifies; a wrong pin does not.
+        let good = ModelSpec {
+            sha256: Box::leak(digest.clone().into_boxed_str()),
+            ..MODEL_1_5B
+        };
+        assert!(verify(&good, &f).unwrap());
+        let bad = ModelSpec {
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            ..MODEL_1_5B
+        };
+        assert!(!verify(&bad, &f).unwrap());
+    }
+}

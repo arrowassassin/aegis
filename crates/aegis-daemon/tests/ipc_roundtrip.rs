@@ -105,9 +105,11 @@ fn catastrophic_command_is_held() {
     let verdict = Client::send(&cmd).unwrap();
 
     // The security spine: a catastrophic command is held, never auto-allowed.
+    // The model adds a one-line summary for the hold card (tier 2) but does not
+    // change the rule-based decision.
     assert_eq!(verdict.decision, Decision::Hold);
     assert_eq!(verdict.class, Class::Catastrophic);
-    assert_eq!(verdict.tier, 1);
+    assert!(verdict.summary.is_some(), "catastrophic gets a summary");
 
     h.join();
 

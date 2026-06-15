@@ -1,0 +1,173 @@
+//! Real CPU GGUF inference backend (feature `llama`).
+//!
+//! Loads a small instruct model with `llama.cpp` and keeps it warm, asking for a
+//! forced-short JSON `{summary, risk}`. If generation or parsing fails for a call,
+//! it degrades to the [`HeuristicScorer`] for that call — the daemon always gets a
+//! usable answer, and the model can only ever *add* caution.
+//!
+//! This backend is gated off by default because it requires a C/C++ toolchain to
+//! build `llama.cpp`. It targets `llama-cpp-2` 0.1.x; pin the model checksum in
+//! `manage.rs` before enabling `--features download`.
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use aegis_core::{Class, ProposedCommand};
+use anyhow::{Context, Result};
+
+use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::llama_backend::LlamaBackend;
+use llama_cpp_2::llama_batch::LlamaBatch;
+use llama_cpp_2::model::params::LlamaModelParams;
+use llama_cpp_2::model::{AddBos, LlamaModel, Special};
+use llama_cpp_2::sampling::LlamaSampler;
+
+use crate::heuristic::HeuristicScorer;
+use crate::manage;
+use crate::{ModelOutput, Scorer};
+
+const MAX_TOKENS: i32 = 160;
+const CTX_TOKENS: u32 = 2048;
+
+/// A warm llama.cpp model behind a mutex (one context, reused per call).
+pub struct LlamaScorer {
+    name: String,
+    backend: LlamaBackend,
+    model: LlamaModel,
+    fallback: HeuristicScorer,
+    // Serialize access: a single context is not concurrently usable.
+    guard: Mutex<()>,
+}
+
+impl LlamaScorer {
+    /// Resolve weights (RAM-selected), then load the model.
+    pub fn autoload() -> Result<Self> {
+        let dir = weights_dir();
+        let spec = manage::select_spec(manage::detect_ram_mb());
+        let path = manage::ensure_weights(spec, &dir)
+            .with_context(|| format!("ensure weights for {}", spec.id))?;
+        Self::load(&path, spec.id)
+    }
+
+    /// Load a model from an explicit GGUF path.
+    pub fn load(path: &std::path::Path, id: &str) -> Result<Self> {
+        let backend = LlamaBackend::init().context("init llama backend")?;
+        let params = LlamaModelParams::default(); // CPU-only
+        let model = LlamaModel::load_from_file(&backend, path, &params)
+            .with_context(|| format!("load model {}", path.display()))?;
+        Ok(Self {
+            name: format!("llama:{id}"),
+            backend,
+            model,
+            fallback: HeuristicScorer::new(),
+            guard: Mutex::new(()),
+        })
+    }
+
+    /// Run inference and parse the JSON answer; returns None on any failure.
+    fn infer(&self, cmd: &ProposedCommand, class: Class) -> Option<ModelOutput> {
+        let _lock = self.guard.lock().ok()?;
+        let prompt = build_prompt(&cmd.raw, class);
+
+        let mut ctx = self
+            .model
+            .new_context(
+                &self.backend,
+                LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(CTX_TOKENS)),
+            )
+            .ok()?;
+
+        let tokens = self.model.str_to_token(&prompt, AddBos::Always).ok()?;
+        let mut batch = LlamaBatch::new(tokens.len().max(1) + MAX_TOKENS as usize, 1);
+        let last = tokens.len() as i32 - 1;
+        for (i, tok) in tokens.iter().enumerate() {
+            batch.add(*tok, i as i32, &[0], i as i32 == last).ok()?;
+        }
+        ctx.decode(&mut batch).ok()?;
+
+        let mut sampler = LlamaSampler::greedy();
+        let mut out = String::new();
+        let mut n_cur = batch.n_tokens();
+        for _ in 0..MAX_TOKENS {
+            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+            sampler.accept(token);
+            if self.model.is_eog_token(token) {
+                break;
+            }
+            if let Ok(piece) = self.model.token_to_str(token, Special::Tokenize) {
+                out.push_str(&piece);
+                if out.contains('}') {
+                    break; // forced-short JSON object
+                }
+            }
+            batch.clear();
+            batch.add(token, n_cur, &[0], true).ok()?;
+            n_cur += 1;
+            ctx.decode(&mut batch).ok()?;
+        }
+        parse_output(&out)
+    }
+}
+
+impl Scorer for LlamaScorer {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn score(&self, cmd: &ProposedCommand, class: Class, rule: &str) -> ModelOutput {
+        // Safe commands never reach the model in the daemon, but be defensive.
+        match self.infer(cmd, class) {
+            Some(out) => ModelOutput {
+                summary: out.summary,
+                risk: out.risk.min(100),
+            },
+            None => self.fallback.score(cmd, class, rule),
+        }
+    }
+}
+
+fn weights_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("AEGIS_MODEL_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Some(dirs) = directories_next() {
+        return dirs;
+    }
+    std::env::temp_dir().join("aegis-models")
+}
+
+fn directories_next() -> Option<PathBuf> {
+    // Avoid a hard dep here; mirror the data dir layout used elsewhere.
+    std::env::var("AEGIS_DATA_DIR")
+        .ok()
+        .map(|d| PathBuf::from(d).join("models"))
+}
+
+fn build_prompt(raw: &str, class: Class) -> String {
+    format!(
+        "You are a security assistant. A shell command was classified as {class}. \
+         Reply with ONLY a compact JSON object: {{\"summary\": \"<one sentence>\", \"risk\": <0-100>}}. \
+         Command: {raw}\nJSON: "
+    )
+}
+
+/// Parse the model's JSON, tolerating leading/trailing prose.
+fn parse_output(text: &str) -> Option<ModelOutput> {
+    let start = text.find('{')?;
+    let end = text[start..].find('}')? + start + 1;
+    let json = &text[start..end];
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let summary = v
+        .get("summary")
+        .and_then(|s| s.as_str())?
+        .trim()
+        .to_string();
+    let risk = v
+        .get("risk")
+        .and_then(|r| r.as_u64())
+        .map(|r| r.min(100) as u8)?;
+    if summary.is_empty() {
+        return None;
+    }
+    Some(ModelOutput { summary, risk })
+}
