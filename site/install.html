@@ -41,10 +41,21 @@
 
   <section>
     <h2><span class="n">&gt;</span> 1 · install + wire</h2>
+    <p class="lead">One line, no clone — downloads prebuilt binaries
+      (checksum-verified) or builds from source if your platform has no prebuilt:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>cargo install aegis        # or: brew install aegis  (when published)
-aegis init                 # detect agents, wire interception, start the daemon</pre>
+<pre>curl -fsSL https://raw.githubusercontent.com/arrowassassin/aegis/main/scripts/install.sh | sh</pre>
+    </div>
+    <p class="muted">Or straight from source with Cargo (also no clone):</p>
+    <div class="cmd">
+      <button class="copy">copy</button>
+<pre>cargo install --git https://github.com/arrowassassin/aegis aegis-cli aegis-daemon aegis-intercept</pre>
+    </div>
+    <p class="muted">Then wire your agents and start the daemon:</p>
+    <div class="cmd">
+      <button class="copy">copy</button>
+<pre>aegis init</pre>
     </div>
     <p class="muted">Then run a command through any wired agent — or a raw shell with
       the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /

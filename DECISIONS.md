@@ -139,3 +139,8 @@ the locked product decisions this build implements.
   process writers (CLI vs daemon) cannot fork it. IPC frame size bounded.
   Kill-switch blocks approvals. Shim preserves argv0. Release profile tuned for
   size (opt=s, lto=fat, strip, panic=abort).
+- Remote install: scripts/install.sh (curl|sh) downloads checksum-verified
+  prebuilt release binaries for the detected target, falling back to `cargo
+  install --git` from source when no prebuilt build matches or no release exists
+  yet — so the one-liner works today (source) and gets fast binaries post-release.
+  No repo clone required. Homebrew deferred per request (formula stays in repo).

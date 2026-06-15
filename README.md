@@ -60,34 +60,41 @@ All build phases are implemented (see
 | `aegis-model` | Tier-2 model wrapper (stub until Phase 2) |
 | `aegis-tui` | ratatui timeline (Phase 4) |
 
-## Quick start
+## Install (no clone needed)
+
+One line — downloads the prebuilt binaries (checksum-verified), or builds from
+source if there's no prebuilt build for your platform:
 
 ```sh
-cargo build
-./target/debug/aegis init      # detect agents, wire interception, start the daemon
-./target/debug/aegis status    # daemon / socket / log / kill-switch health
-./target/debug/aegis log       # the recent command timeline
-./target/debug/aegis tui       # live, interactive timeline (j/k, /, enter, u, q)
-./target/debug/aegis undo      # restore the last destructive action
-./target/debug/aegis watch .   # FS-watcher backstop for un-intercepted changes
-./target/debug/aegis queue     # commands held for approval (approve <id> / deny <id>)
-./target/debug/aegis panic     # kill-switch: halt all agent actions (resume to clear)
+curl -fsSL https://raw.githubusercontent.com/arrowassassin/aegis/main/scripts/install.sh | sh
 ```
 
+Or straight from source with Cargo (no clone):
+
+```sh
+cargo install --git https://github.com/arrowassassin/aegis aegis-cli aegis-daemon aegis-intercept
+```
+
+Then:
+
+```sh
+aegis init        # detect agents, wire interception, start the daemon
+aegis status      # daemon / socket / log / kill-switch health
+aegis tui         # live, interactive timeline (j/k, enter, a/d, u, /, q)
+```
+
+Other commands: `aegis log`, `aegis undo [--session]`, `aegis queue` /
+`approve <id>` / `deny <id>`, `aegis watch <path>`, `aegis panic` / `resume`.
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
 are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
 `demo.md`).
 
 ## Claude Code plugin
 
-This repo doubles as a Claude Code plugin marketplace. Install the binaries
-first, then enable the plugin (which wires the hook + MCP server):
+This repo doubles as a Claude Code plugin marketplace. Install the binaries (see
+above), then enable the plugin (which wires the hook + MCP server):
 
 ```sh
-cargo install aegis        # or Homebrew, when published
-aegis init                 # start the daemon
-```
-```
 /plugin marketplace add arrowassassin/aegis
 /plugin install aegis@aegis
 ```
