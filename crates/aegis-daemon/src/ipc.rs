@@ -37,7 +37,9 @@ pub enum Request {
 /// A filesystem change observed by the backstop watcher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
-    /// `created` | `modified` | `removed`.
+    /// `created` | `modified` | `removed`. Serialized as `change` so it never
+    /// collides with the enum's internal `kind` tag.
+    #[serde(rename = "change")]
     pub kind: String,
     /// The path that changed.
     pub path: String,
