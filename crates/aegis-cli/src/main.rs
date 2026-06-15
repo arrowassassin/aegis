@@ -493,14 +493,18 @@ fn wire_claude_hook(home: Option<&std::path::Path>) -> Result<()> {
 
 fn start_daemon() -> Result<()> {
     let daemon_bin = init::sibling_bin("aegis-daemon");
-    std::process::Command::new(&daemon_bin)
+    let child = std::process::Command::new(&daemon_bin)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .with_context(|| format!("start daemon {}", daemon_bin.display()))?;
-    // Give it a moment to bind the socket.
-    for _ in 0..50 {
+    // Record the PID next to the log so `aegis` (and tests) can target *this*
+    // daemon for cleanup instead of a broad `pkill`.
+    let pid_path = default_db_path().with_file_name("aegis.pid");
+    let _ = std::fs::write(&pid_path, child.id().to_string());
+    // Wait (generously, for loaded CI) for it to bind before returning.
+    for _ in 0..150 {
         if Client::is_daemon_running() {
             return Ok(());
         }
