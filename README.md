@@ -58,7 +58,26 @@ cargo build
 ```
 
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
-are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `demo.md`).
+are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
+`demo.md`).
+
+## Claude Code plugin
+
+This repo doubles as a Claude Code plugin marketplace. Install the binaries
+first, then enable the plugin (which wires the hook + MCP server):
+
+```sh
+cargo install aegis        # or Homebrew, when published
+aegis init                 # start the daemon
+```
+```
+/plugin marketplace add arrowassassin/aegis
+/plugin install aegis@aegis
+```
+
+The plugin is a thin wiring layer (`plugin/aegis/`); the native binaries are
+distributed via cargo/Homebrew, not bundled. See
+[`plugin/aegis/README.md`](plugin/aegis/README.md).
 
 `aegis init` prints a `PATH` line to prepend so the shim can guard raw
 shell-outs. Pointing tool-calling agents at the MCP server is documented in

@@ -111,3 +111,10 @@ the locked product decisions this build implements.
   bare String or Vec, so PendingStatus/Approve/Deny and PendingList became struct
   variants (caught by an over-the-socket integration test). A human may approve
   any class (override); the model never approves catastrophic; panic overrides all.
+- Distribution: published as a Claude Code plugin + marketplace. The plugin
+  (plugin/aegis) is a thin wiring layer — PreToolUse hook -> aegis-hook and MCP
+  aegis-exec -> aegis-mcp — because /plugin install ships config, not native
+  binaries or a daemon. Binaries go via cargo/Homebrew (signable/checksummed);
+  the repo root .claude-plugin/marketplace.json references the plugin by relative
+  path so the one repo is both marketplace and plugin host. defaultEnabled=false
+  (a safety tool must be trusted before it runs).
