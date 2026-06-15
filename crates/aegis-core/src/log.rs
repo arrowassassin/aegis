@@ -268,22 +268,6 @@ impl EventLog {
         Ok(out)
     }
 
-    /// Resolve a queue id from a unique prefix (CLI convenience).
-    pub fn resolve_pending_prefix(&self, prefix: &str) -> Result<Option<String>, LogError> {
-        let like = format!("{prefix}%");
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM pending WHERE status = 'pending' AND id LIKE ?1")?;
-        let ids: Vec<String> = stmt
-            .query_map([like], |r| r.get::<_, String>(0))?
-            .collect::<Result<_, _>>()?;
-        Ok(if ids.len() == 1 {
-            ids.into_iter().next()
-        } else {
-            None
-        })
-    }
-
     /// Record a snapshot taken before a destructive command.
     pub fn record_snapshot(&self, manifest: &crate::snapshot::Manifest) -> Result<(), LogError> {
         let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
