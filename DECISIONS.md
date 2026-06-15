@@ -118,3 +118,9 @@ the locked product decisions this build implements.
   the repo root .claude-plugin/marketplace.json references the plugin by relative
   path so the one repo is both marketplace and plugin host. defaultEnabled=false
   (a safety tool must be trusted before it runs).
+- Site: 8-bit themed static product site in `site/`, deployed to GitHub Pages
+  via `.github/workflows/pages.yml` (source must be set to "GitHub Actions" once
+  in repo settings). Every terminal "screenshot" is REAL output captured from the
+  release binaries (TUI rendered through ratatui TestBackend; hold card, log,
+  queue, init, status from live runs) — no mockups. Press Start 2P + VT323, one
+  danger accent, CRT scanlines, copy-to-clipboard on commands.

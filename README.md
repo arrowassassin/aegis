@@ -1,5 +1,9 @@
 # Aegis
 
+**Website:** https://arrowassassin.github.io/aegis/ (8-bit product site with live
+feature frames — deploys from [`site/`](site/) once GitHub Pages is enabled with
+source "GitHub Actions").
+
 A local-first safety layer for AI coding agents. Aegis intercepts the commands an
 agent is about to run, warns you in plain English **before** they execute, makes
 destructive actions reversible, and keeps a tamper-evident record of everything
