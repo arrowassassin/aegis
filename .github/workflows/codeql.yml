@@ -44,9 +44,12 @@ jobs:
       matrix:
         include:
           # The workspace is Rust-only; the previous template shipped an empty
-          # matrix and the workflow reported failure because no jobs ran.
+          # matrix and the workflow reported failure because no jobs ran. The
+          # CodeQL Rust extractor only supports build-mode: none (it parses
+          # sources directly — no cargo build needed and `manual` is rejected
+          # outright with "Rust does not support the manual build mode").
           - language: rust
-            build-mode: manual
+            build-mode: none
           - language: actions
             build-mode: none
     steps:
@@ -78,15 +81,6 @@ jobs:
     # to build your code.
     # ℹ️ Command-line programs to run using the OS shell.
     # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
-    - name: Install Rust (for the Rust analyzer)
-      if: matrix.language == 'rust'
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Build Rust workspace
-      if: matrix.language == 'rust'
-      shell: bash
-      run: cargo build --workspace --all-targets
-
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
       with:
