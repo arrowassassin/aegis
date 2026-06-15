@@ -5,6 +5,30 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Security & hardening
+- Review hardening (panel: 2 principal eng, 4 testers, 2 dev-users):
+  - **Catastrophic hard floor** is now consistent: neither decision memory nor
+    `.aegis.toml` policy can auto-downgrade a catastrophic command, and `[r]`
+    never *remembers* a catastrophic (acts as allow-once). Only an in-the-moment
+    human decision runs it.
+  - **Hook**: a catastrophic hold maps to `deny` (not `ask`) so a one-click
+    allow in Claude's UI can't bypass the Aegis snapshot; ambiguous still `ask`.
+  - **`tee` removed from the safe-list** (it clobbers files); coreutils
+    `truncate -s` is now catastrophic.
+  - **Hash chain**: the read-modify-append runs inside a `BEGIN IMMEDIATE`
+    transaction with a busy-timeout, so concurrent writers (CLI undo/panic while
+    the daemon runs) serialize instead of forking the chain.
+  - **IPC** frames are bounded (16 MiB) to stop an OOM/stall of the
+    single-threaded daemon.
+  - **Kill-switch** also blocks queue approvals.
+  - **Shim** preserves argv[0] so multi-call binaries (busybox, gunzip) behave.
+  - **MCP** in-band wait fails fast when the daemon is gone instead of polling a
+    dead socket for the whole timeout.
+  - Size/speed: release profile now `opt-level=s`, `lto=fat`, `strip`,
+    `panic=abort` (panic hooks still run, TUI teardown safe) — ~30-50% smaller
+    binaries. Hot-path cleanups in the classifier.
+
+
 ### Added
 - **P0.1** — Cargo workspace scaffold with six crates (`aegis-core`,
   `aegis-daemon`, `aegis-intercept`, `aegis-cli`, `aegis-model`, `aegis-tui`).

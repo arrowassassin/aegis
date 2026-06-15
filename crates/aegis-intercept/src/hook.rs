@@ -15,7 +15,7 @@
 //! Fail-open: a malformed payload, a non-shell tool, or an unreachable daemon
 //! never blocks Claude Code (unless `AEGIS_FAIL_CLOSED=1`).
 
-use aegis_core::{shell, Decision, ProposedCommand, Verdict};
+use aegis_core::{shell, Class, Decision, ProposedCommand, Verdict};
 use aegis_daemon::Client;
 use serde::Deserialize;
 
@@ -106,6 +106,12 @@ fn map_verdict(verdict: &Verdict) -> HookOutcome {
     match verdict.decision {
         Decision::Allow => HookOutcome::allow_silent(),
         Decision::Deny => deny_output(&verdict.reason),
+        // A held command is handed to the user. But a *catastrophic* one is mapped
+        // to `deny`, not `ask`: a one-click "allow" in Claude Code's own UI would
+        // run it with no Aegis snapshot or recorded resolution, voiding the
+        // reversibility guarantee. Catastrophic must go through a guarded path
+        // (shim/CLI/TUI) that snapshots first; only ambiguous holds become `ask`.
+        Decision::Hold if verdict.class == Class::Catastrophic => deny_output(&verdict.reason),
         Decision::Hold => ask_output(&verdict.reason),
     }
 }

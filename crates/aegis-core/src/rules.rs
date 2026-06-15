@@ -340,16 +340,12 @@ fn catastrophic_segment(prog: &str, args: &[&str], seg: &str) -> Option<&'static
         }
         "docker" | "podman" => {
             let sub = first_subcommand(args);
-            let rest: Vec<&str> = args
-                .iter()
-                .copied()
-                .filter(|a| a != &sub.clone().unwrap_or_default())
-                .collect();
-            if sub.as_deref() == Some("system") && rest.contains(&"prune") {
+            let sub_s = sub.as_deref().unwrap_or_default();
+            let rest = || args.iter().filter(|a| **a != sub_s);
+            if sub.as_deref() == Some("system") && rest().any(|a| *a == "prune") {
                 return Some("docker:system-prune");
             }
-            if sub.as_deref() == Some("volume") && (rest.contains(&"rm") || rest.contains(&"prune"))
-            {
+            if sub.as_deref() == Some("volume") && rest().any(|a| *a == "rm" || *a == "prune") {
                 return Some("docker:volume-destroy");
             }
         }
@@ -360,6 +356,14 @@ fn catastrophic_segment(prog: &str, args: &[&str], seg: &str) -> Option<&'static
         }
         "shred" | "wipefs" | "fdisk" | "parted" | "sgdisk" | "mke2fs" => {
             return Some("disk:destructive")
+        }
+        // coreutils `truncate` shrinks/zeroes a file in place — destructive.
+        "truncate"
+            if args
+                .iter()
+                .any(|a| a.starts_with("-s") || a.starts_with("--size")) =>
+        {
+            return Some("disk:truncate")
         }
         p if p.starts_with("mkfs") => return Some("disk:mkfs"),
         "chmod" | "chown" => {
@@ -458,7 +462,7 @@ fn is_safe(prog: &str, args: &[&str]) -> bool {
         "wc", "sort", "uniq", "cut", "less", "more", "man", "which", "type", "whoami", "id",
         "hostname", "uname", "date", "ps", "df", "du", "free", "tree", "stat", "file", "basename",
         "dirname", "realpath", "readlink", "true", "false", "sleep", "clear", "env", "printenv",
-        "tldr", "jq", "yq", "diff", "cmp", "column", "tee",
+        "tldr", "jq", "yq", "diff", "cmp", "column",
     ];
 
     // `cat`/`find`/`sed` are only safe in their read-only forms.

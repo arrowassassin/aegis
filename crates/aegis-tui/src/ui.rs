@@ -13,7 +13,7 @@ use ratatui::widgets::{
 };
 use time::macros::format_description;
 
-use crate::app::{App, Mode, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::{outcome_word, App, Mode, MIN_HEIGHT, MIN_WIDTH};
 
 const ACCENT: Color = Color::Yellow; // the one reserved accent (held / ambiguous)
 const DANGER: Color = Color::Red; // denied / catastrophic
@@ -124,14 +124,6 @@ fn panel(app: &App, title: &str) -> Block<'static> {
         b.border_style(Style::default().fg(Color::DarkGray))
     } else {
         b
-    }
-}
-
-fn outcome_word(d: Decision) -> &'static str {
-    match d {
-        Decision::Allow => "allowed",
-        Decision::Deny => "denied",
-        Decision::Hold => "held",
     }
 }
 

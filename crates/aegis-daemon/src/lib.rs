@@ -177,11 +177,14 @@ impl Daemon {
         let action = policy.action_for(&cmd.raw);
         verdict = aegis_core::adjust_for_policy(verdict, action, mode);
 
-        // Decision memory has the final say.
+        // Decision memory has the final say — but, like policy, it can never
+        // auto-downgrade a CATASTROPHIC command (that hard floor only lifts via an
+        // in-the-moment human decision, never a stored/replayed one). Memory deny
+        // always applies (escalation-only).
         let repo = repo_key(&cmd.cwd);
         let hash = aegis_core::command_hash(&cmd.raw);
         match self.log.memory_lookup(&repo, &hash) {
-            Ok(Some(Decision::Allow)) => {
+            Ok(Some(Decision::Allow)) if verdict.class != aegis_core::Class::Catastrophic => {
                 verdict.decision = Decision::Allow;
                 verdict.reason = format!("memory:allow ({})", verdict.reason);
             }
@@ -189,8 +192,7 @@ impl Daemon {
                 verdict.decision = Decision::Deny;
                 verdict.reason = format!("memory:deny ({})", verdict.reason);
             }
-            Ok(Some(Decision::Hold)) | Ok(None) => {}
-            Err(e) => eprintln!("aegis-daemon: memory lookup failed: {e}"),
+            _ => {}
         }
         verdict
     }
@@ -223,6 +225,10 @@ impl Daemon {
     /// deliberate human override (the *model* never can). Returns whether the id
     /// was found in the queue.
     pub fn resolve_pending(&self, id: &str, decision: Decision) -> Result<bool> {
+        // While the kill-switch is engaged, nothing is approvable.
+        if decision == Decision::Allow && self.kill_switch_engaged() {
+            anyhow::bail!("kill-switch engaged; clear it with `aegis resume` before approving");
+        }
         let Some(cmd) = self.log.pending_command(id)? else {
             return Ok(false);
         };
@@ -268,10 +274,15 @@ impl Daemon {
         let cmd = &resolution.command;
         // Re-classify so the recorded class is accurate even though a human chose.
         let m = aegis_core::classify(cmd);
+        // A catastrophic command is never *remembered* as always-allow — the hard
+        // floor must re-prompt every time; `[r]` on a catastrophic acts as allow-once.
+        let remember = resolution.remember
+            && !(resolution.decision == Decision::Allow
+                && m.class == aegis_core::Class::Catastrophic);
         let reason = match resolution.decision {
-            Decision::Allow if resolution.remember => "human:always-allow",
+            Decision::Allow if remember => "human:always-allow",
             Decision::Allow => "human:allow",
-            Decision::Deny if resolution.remember => "human:always-deny",
+            Decision::Deny if remember => "human:always-deny",
             Decision::Deny => "human:deny",
             Decision::Hold => "human:hold",
         };
@@ -280,7 +291,7 @@ impl Daemon {
         let snapshot_id = self.maybe_snapshot(cmd, &verdict);
         self.log.log_event(cmd, &verdict, snapshot_id.as_deref())?;
 
-        if resolution.remember && resolution.decision != Decision::Hold {
+        if remember && resolution.decision != Decision::Hold {
             let repo = repo_key(&cmd.cwd);
             let hash = aegis_core::command_hash(&cmd.raw);
             self.log.remember(&repo, &hash, resolution.decision)?;

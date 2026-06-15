@@ -132,3 +132,10 @@ the locked product decisions this build implements.
   (persisted) flips chrome only, terminals stay dark. Homebrew: a build-from-
   source formula (packaging/homebrew/aegis.rb) + docs/homebrew.md (tap first,
   core later).
+- Review pass: catastrophic hard floor made consistent across memory/policy/
+  hook (no static or replayed allow downgrades it; hook denies catastrophic
+  rather than delegating to Claude's ask which would skip the snapshot). Hash
+  chain read-modify-append wrapped in BEGIN IMMEDIATE + busy_timeout so multi-
+  process writers (CLI vs daemon) cannot fork it. IPC frame size bounded.
+  Kill-switch blocks approvals. Shim preserves argv0. Release profile tuned for
+  size (opt=s, lto=fat, strip, panic=abort).

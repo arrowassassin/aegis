@@ -56,5 +56,8 @@ directories = "6.0.0"
 tempfile = "3.27.0"
 
 [profile.release]
-lto = "thin"
-codegen-units = 1
+opt-level = "s"      # optimize for size; these binaries are I/O-bound
+lto = "fat"          # cross-crate inlining + dead-code elimination
+codegen-units = 1    # better optimization / smaller output
+strip = "symbols"    # drop symbol tables from shipped binaries
+panic = "abort"      # no unwind tables; panic hooks still run (TUI teardown safe)

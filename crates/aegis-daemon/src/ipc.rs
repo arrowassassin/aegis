@@ -7,7 +7,7 @@
 //! `Ack`. Transport is a Unix domain socket (filesystem) or a Windows named pipe
 //! (namespaced), abstracted by the `interprocess` crate.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 
 use aegis_core::{Decision, ProposedCommand, Verdict};
@@ -134,14 +134,27 @@ fn write_message<W: Write, T: Serialize>(w: &mut W, value: &T) -> Result<()> {
     Ok(())
 }
 
-/// Read one newline-delimited JSON message.
+/// Maximum size of a single IPC message. Bounds memory so a misbehaving or
+/// hostile local peer can't OOM/stall the single-threaded daemon with a giant or
+/// newline-free stream.
+pub const MAX_FRAME: u64 = 16 * 1024 * 1024;
+
+/// Read one newline-delimited JSON message from a length-bounded reader.
 fn read_message<R: BufRead, T: serde::de::DeserializeOwned>(r: &mut R) -> Result<T> {
     let mut line = String::new();
     let n = r.read_line(&mut line).context("read IPC message")?;
     if n == 0 {
         anyhow::bail!("connection closed before a message was received");
     }
+    if !line.ends_with('\n') && n as u64 >= MAX_FRAME {
+        anyhow::bail!("IPC message exceeds {MAX_FRAME} bytes");
+    }
     serde_json::from_str(line.trim_end()).context("deserialize IPC message")
+}
+
+/// Wrap a stream in a length-bounded buffered reader (see [`MAX_FRAME`]).
+fn bounded(stream: &mut Stream) -> BufReader<std::io::Take<&mut Stream>> {
+    BufReader::new(stream.take(MAX_FRAME))
 }
 
 /// Expect an `Ack`, mapping anything else to an error.
@@ -158,7 +171,7 @@ fn round_trip(req: &Request) -> Result<Response> {
     let name = make_name()?;
     let mut stream = Stream::connect(name).context("connect to aegis daemon (is it running?)")?;
     write_message(&mut stream, req)?;
-    let mut reader = BufReader::new(&mut stream);
+    let mut reader = bounded(&mut stream);
     read_message(&mut reader)
 }
 
@@ -295,7 +308,7 @@ impl Server {
         F: FnMut(Request) -> Response,
     {
         let req: Request = {
-            let mut reader = BufReader::new(&mut stream);
+            let mut reader = bounded(&mut stream);
             read_message(&mut reader)?
         };
         let resp = handler(req);

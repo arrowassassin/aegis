@@ -128,6 +128,10 @@ impl EventLog {
         // chain stays intact and verifiable.
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // Block (rather than fail) when another process holds the write lock, so
+        // the read-modify-append in `log_event` serializes across processes instead
+        // of forking the hash chain on a shared prev_hash.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS events (
@@ -273,9 +277,11 @@ impl EventLog {
         let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
         let json = serde_json::to_string(manifest)
             .map_err(|e| LogError::Corrupt(format!("manifest serialize: {e}")))?;
+        // Snapshots are recorded just before the event they guard is appended, so
+        // the guarded event's seq is the next rowid (= current count + 1).
         let seq: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
+            .query_row("SELECT COUNT(*) + 1 FROM events", [], |r| r.get(0))?;
         self.conn.execute(
             "INSERT INTO snapshots (id, seq, ts, command, manifest, reverted) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
             rusqlite::params![manifest.id, seq, now, manifest.command, json],
@@ -418,27 +424,27 @@ impl EventLog {
         Ok(hash.unwrap_or_else(|| GENESIS_HASH.to_string()))
     }
 
-    /// Append one event built from a proposal and its verdict.
-    pub fn log_event(
+    /// The read-modify-append, run inside the write transaction. Returns
+    /// (prev_hash, hash, seq).
+    #[allow(clippy::too_many_arguments)]
+    fn append_locked(
         &self,
         cmd: &ProposedCommand,
         verdict: &Verdict,
+        ts: &str,
+        cwd: &str,
+        argv_json: &str,
         snapshot_id: Option<&str>,
-    ) -> Result<LoggedEvent, LogError> {
+    ) -> Result<(String, String, i64), LogError> {
         let prev_hash = self.head_hash()?;
-        let ts = cmd.ts.format(&Rfc3339)?;
-        let cwd = cmd.cwd.to_string_lossy().to_string();
-        let argv_json = serde_json::to_string(&cmd.argv)
-            .map_err(|e| LogError::Corrupt(format!("argv serialize: {e}")))?;
-
         let hash = Self::compute_hash(
             &prev_hash,
             &cmd.id,
-            &ts,
+            ts,
             &cmd.agent,
-            &cwd,
+            cwd,
             &cmd.raw,
-            &argv_json,
+            argv_json,
             verdict.class,
             verdict.decision,
             &verdict.reason,
@@ -447,7 +453,6 @@ impl EventLog {
             verdict.summary.as_deref(),
             snapshot_id,
         );
-
         self.conn.execute(
             r#"
             INSERT INTO events
@@ -472,7 +477,36 @@ impl EventLog {
                 hash,
             ],
         )?;
-        let seq = self.conn.last_insert_rowid();
+        Ok((prev_hash, hash, self.conn.last_insert_rowid()))
+    }
+
+    /// Append one event built from a proposal and its verdict.
+    pub fn log_event(
+        &self,
+        cmd: &ProposedCommand,
+        verdict: &Verdict,
+        snapshot_id: Option<&str>,
+    ) -> Result<LoggedEvent, LogError> {
+        let ts = cmd.ts.format(&Rfc3339)?;
+        let cwd = cmd.cwd.to_string_lossy().to_string();
+        let argv_json = serde_json::to_string(&cmd.argv)
+            .map_err(|e| LogError::Corrupt(format!("argv serialize: {e}")))?;
+
+        // Serialize the read-modify-append: take the write lock immediately so a
+        // concurrent writer (another process) blocks and then reads the updated
+        // head, rather than both linking new rows to the same prev_hash.
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let (prev_hash, hash, seq) =
+            match self.append_locked(cmd, verdict, &ts, &cwd, &argv_json, snapshot_id) {
+                Ok(v) => {
+                    self.conn.execute_batch("COMMIT")?;
+                    v
+                }
+                Err(e) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    return Err(e);
+                }
+            };
 
         Ok(LoggedEvent {
             seq,

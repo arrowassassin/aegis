@@ -59,7 +59,7 @@ pub fn run() -> ExitCode {
 
     // Allowed: hand off to the real binary.
     match resolve_real_binary(&cmd_name) {
-        Some(real) => exec_real(&real, &cmd_args),
+        Some(real) => exec_real(&real, &cmd_name, &cmd_args),
         None => {
             eprintln!("aegis: {cmd_name}: command not found");
             ExitCode::from(EXIT_NOT_FOUND)
@@ -273,18 +273,23 @@ fn is_executable_file(path: &Path) -> bool {
 
 /// Replace this process with the real binary (Unix) or spawn-and-wait (Windows).
 #[cfg(unix)]
-fn exec_real(real: &Path, args: &[String]) -> ExitCode {
+fn exec_real(real: &Path, argv0: &str, args: &[String]) -> ExitCode {
     use std::os::unix::process::CommandExt;
-    // `exec` only returns on failure; on success the kernel replaces this image,
-    // preserving exit code, stdio, and signal delivery exactly.
-    let err = std::process::Command::new(real).args(args).exec();
+    // Preserve argv[0] (the invoked name) so multi-call binaries — busybox,
+    // gunzip→gzip, etc. — pick the right applet. `exec` only returns on failure;
+    // on success the kernel replaces this image, preserving exit code, stdio, and
+    // signal delivery exactly.
+    let err = std::process::Command::new(real)
+        .arg0(argv0)
+        .args(args)
+        .exec();
     eprintln!("aegis: failed to exec {}: {err}", real.display());
     ExitCode::from(EXIT_BLOCKED)
 }
 
 /// Windows has no `exec`; spawn the child, wait, and propagate its exit code.
 #[cfg(not(unix))]
-fn exec_real(real: &Path, args: &[String]) -> ExitCode {
+fn exec_real(real: &Path, _argv0: &str, args: &[String]) -> ExitCode {
     match std::process::Command::new(real).args(args).status() {
         Ok(status) => {
             let code = status.code().unwrap_or(1);

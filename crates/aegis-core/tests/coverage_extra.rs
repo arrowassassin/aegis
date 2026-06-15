@@ -156,6 +156,13 @@ fn read_only_tool_variants_are_safe() {
 }
 
 #[test]
+fn tee_is_not_safe() {
+    // `tee` writes/overwrites files, so it must not be on the safe fast path.
+    amb("echo data | tee /etc/hosts");
+    cat("truncate -s 0 important.log");
+}
+
+#[test]
 fn mutating_tool_variants_are_ambiguous() {
     amb("sed -i 's/a/b/' f");
     amb("find . -delete");

@@ -191,14 +191,22 @@ fn approval_timeout() -> std::time::Duration {
 /// or it leaves the queue. Returns the resulting decision (`Hold` = still pending).
 fn wait_for_approval(id: &str) -> Decision {
     let deadline = std::time::Instant::now() + approval_timeout();
+    // Tolerate a few transient connection blips (the daemon is single-threaded and
+    // a concurrent connect can momentarily fail), but give up fast if the daemon
+    // is actually gone rather than busy-polling a dead socket for the whole timeout.
+    let mut consecutive_errors = 0u32;
     loop {
-        // Only an explicit approve/deny is decisive; "pending", "gone", and
-        // transient connection errors (the daemon is single-threaded) all retry
-        // until the deadline.
         match Client::pending_status(id) {
             Ok(s) if s == "approved" => return Decision::Allow,
             Ok(s) if s == "denied" => return Decision::Deny,
-            _ => {}
+            Ok(s) if s == "gone" => return Decision::Hold, // resolved/removed elsewhere
+            Ok(_) => consecutive_errors = 0,               // "pending" — keep waiting
+            Err(_) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= 5 {
+                    return Decision::Hold; // daemon unreachable; don't hang
+                }
+            }
         }
         if std::time::Instant::now() >= deadline {
             return Decision::Hold;

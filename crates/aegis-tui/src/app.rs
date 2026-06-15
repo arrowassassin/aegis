@@ -9,6 +9,15 @@ use crossterm::event::KeyCode;
 pub const MIN_WIDTH: u16 = 60;
 pub const MIN_HEIGHT: u16 = 10;
 
+/// The human-facing word for a decision (shared by the list, detail, and filter).
+pub fn outcome_word(d: aegis_core::Decision) -> &'static str {
+    match d {
+        aegis_core::Decision::Allow => "allowed",
+        aegis_core::Decision::Deny => "denied",
+        aegis_core::Decision::Hold => "held",
+    }
+}
+
 /// Which view/mode the UI is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -80,6 +89,7 @@ impl App {
                     || e.agent.to_lowercase().contains(&needle)
                     || e.class.as_str().contains(&needle)
                     || e.decision.as_str().contains(&needle)
+                    || outcome_word(e.decision).contains(&needle) // the displayed word
                     || e.reason.to_lowercase().contains(&needle)
             })
             .map(|(i, _)| i)

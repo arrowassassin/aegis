@@ -56,6 +56,37 @@ fn resolve_allow_remember_then_memory_auto_allows() {
 }
 
 #[test]
+fn memory_never_downgrades_catastrophic() {
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_CONFIG", tmp.path().join("none.toml"));
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let daemon = Daemon::open(tmp.path().join("e.db")).unwrap();
+    let cmd = propose(&repo, "rm -rf /var/data");
+
+    // A human resolves a catastrophic command with remember=true...
+    daemon
+        .resolve(&Resolution {
+            command: cmd.clone(),
+            decision: Decision::Allow,
+            remember: true,
+        })
+        .unwrap();
+
+    // ...it is NOT persisted to memory (catastrophic never becomes always-allow)...
+    let key = aegis_daemon::repo_key(&repo);
+    let hash = aegis_core::command_hash("rm -rf /var/data");
+    assert!(daemon.log().memory_lookup(&key, &hash).unwrap().is_none());
+
+    // ...and even a directly-stored memory allow does not downgrade it on decide.
+    daemon.log().remember(&key, &hash, Decision::Allow).unwrap();
+    let v = daemon.decide(&cmd);
+    assert_eq!(v.class, Class::Catastrophic);
+    assert_eq!(v.decision, Decision::Hold, "catastrophic hard floor stands");
+}
+
+#[test]
 fn resolve_deny_is_recorded() {
     let _g = serial_lock();
     let tmp = tempfile::tempdir().unwrap();

@@ -91,7 +91,7 @@ fn safe_bash_hook_payload_is_logged_as_claude_code() {
 }
 
 #[test]
-fn catastrophic_bash_hook_payload_is_held_as_ask() {
+fn catastrophic_bash_hook_payload_is_denied_not_ask() {
     let mut h = start(1);
 
     let payload = r#"{
@@ -100,16 +100,27 @@ fn catastrophic_bash_hook_payload_is_held_as_ask() {
         "tool_input": { "command": "rm -rf /" }
     }"#;
 
-    // A catastrophic command is held → mapped to Claude Code's "ask".
+    // A catastrophic hold is mapped to "deny" (NOT "ask"): a one-click allow in
+    // Claude's UI would bypass Aegis's snapshot. It must go through a guarded path.
     let outcome = handle(payload);
     let body: serde_json::Value = serde_json::from_str(outcome.stdout.as_deref().unwrap()).unwrap();
-    assert_eq!(body["hookSpecificOutput"]["permissionDecision"], "ask");
+    assert_eq!(body["hookSpecificOutput"]["permissionDecision"], "deny");
 
     h.join();
     let log = EventLog::open(&h.db).unwrap();
     let tail = log.tail(1).unwrap();
     assert_eq!(tail[0].decision, Decision::Hold);
     assert_eq!(tail[0].class, aegis_core::Class::Catastrophic);
+}
+
+#[test]
+fn ambiguous_bash_hook_payload_is_ask() {
+    let mut h = start(1);
+    let payload = r#"{ "tool_name": "Bash", "tool_input": { "command": "make deploy" } }"#;
+    let outcome = handle(payload);
+    let body: serde_json::Value = serde_json::from_str(outcome.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(body["hookSpecificOutput"]["permissionDecision"], "ask");
+    h.join();
 }
 
 #[test]

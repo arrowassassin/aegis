@@ -150,15 +150,13 @@ fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
         _ => anyhow::bail!("id `{id}` is ambiguous; use more characters"),
     };
 
+    let short = full.get(..8).unwrap_or(&full);
     if approve {
         Client::approve(&full).context("approve")?;
-        println!(
-            "✓ approved {} — the requesting agent may now proceed.",
-            &full[..8]
-        );
+        println!("✓ approved {short} — the requesting agent may now proceed.");
     } else {
         Client::deny(&full).context("deny")?;
-        println!("✗ denied {}.", &full[..8]);
+        println!("✗ denied {short}.");
     }
     Ok(())
 }
