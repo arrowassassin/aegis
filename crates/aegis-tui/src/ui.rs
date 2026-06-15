@@ -1,20 +1,25 @@
 //! Rendering for the Aegis TUI.
 //!
-//! Design direction (from `CLAUDE.md` / the design doc): calm until it must
-//! shout. One reserved accent for danger, everything else the terminal's default
-//! foreground. Every state is also a word, never color alone. `NO_COLOR` is
-//! honored via [`App::color`]. The layout reflows at any size and shows a
-//! deliberate notice when the terminal is too small.
+//! Craft borrowed from the ratatui showcase — bordered panels, a split
+//! list/detail layout, a real risk gauge, proper selection highlight — but the
+//! design language stays Aegis's: calm until it must shout. One reserved danger
+//! accent, every state also a word (never color alone), `NO_COLOR` honored via
+//! [`App::color`], reflows at any size, and a deliberate "too small" notice.
 
 use aegis_core::{Class, Decision, LoggedEvent};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Cell, Gauge, Paragraph, Row, Table, TableState, Wrap,
+};
 use time::macros::format_description;
 
 use crate::app::{App, Mode, MIN_HEIGHT, MIN_WIDTH};
 
-const ACCENT: Color = Color::Yellow; // the one reserved accent (held)
+const ACCENT: Color = Color::Yellow; // the one reserved accent (held / ambiguous)
 const DANGER: Color = Color::Red; // denied / catastrophic
+const OKGREEN: Color = Color::Green; // allowed
+/// Below this width the detail pane stacks out; the list takes the full width.
+const SPLIT_WIDTH: u16 = 100;
 
 /// Render the whole UI for the current frame.
 pub fn render(f: &mut Frame, app: &App) {
@@ -24,27 +29,40 @@ pub fn render(f: &mut Frame, app: &App) {
         return;
     }
 
-    let chunks = Layout::vertical([
+    let rows = Layout::vertical([
         Constraint::Length(1), // header
         Constraint::Min(1),    // body
         Constraint::Length(2), // footer
     ])
     .split(area);
 
-    render_header(f, app, chunks[0]);
+    render_header(f, app, rows[0]);
     if app.is_empty() {
-        render_empty(f, app, chunks[1]);
+        render_empty(f, app, rows[1]);
     } else if app.mode == Mode::Detail {
-        render_detail(f, app, chunks[1]);
+        render_detail(f, app, rows[1], true);
+    } else if rows[1].width >= SPLIT_WIDTH {
+        let cols = Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .split(rows[1]);
+        render_list(f, app, cols[0]);
+        render_detail(f, app, cols[1], false);
     } else {
-        render_table(f, app, chunks[1]);
+        render_list(f, app, rows[1]);
     }
-    render_footer(f, app, chunks[2]);
+    render_footer(f, app, rows[2]);
 }
 
 fn dim(app: &App) -> Style {
     if app.color {
         Style::default().add_modifier(Modifier::DIM)
+    } else {
+        Style::default()
+    }
+}
+
+fn accent_fg(app: &App, c: Color) -> Style {
+    if app.color {
+        Style::default().fg(c)
     } else {
         Style::default()
     }
@@ -61,16 +79,17 @@ fn render_too_small(f: &mut Frame, area: Rect) {
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let total = app.visible().len();
-    let left = Span::styled("Aegis", Style::default().add_modifier(Modifier::BOLD));
-    let mid = Span::styled("  timeline", dim(app));
-    let right = Span::styled(format!("{total} events"), dim(app));
-    let used = "Aegis  timeline".len() as u16;
-    let pad = area.width.saturating_sub(used + right.content.len() as u16) as usize;
-    let line = Line::from(vec![left, mid, Span::raw(" ".repeat(pad)), right]);
-    f.render_widget(Paragraph::new(line), area);
+    let left = Line::from(vec![
+        Span::styled("▦ Aegis", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("  timeline", dim(app)),
+    ]);
+    let right = Line::from(Span::styled(format!("{total} events"), dim(app))).right_aligned();
+    f.render_widget(Paragraph::new(left), area);
+    f.render_widget(Paragraph::new(right), area);
 }
 
 fn render_empty(f: &mut Frame, app: &App, area: Rect) {
+    let block = panel(app, " timeline ");
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
@@ -87,7 +106,25 @@ fn render_empty(f: &mut Frame, app: &App, area: Rect) {
             dim(app),
         )),
     ];
-    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .alignment(Alignment::Center),
+        area,
+    );
+}
+
+/// A rounded bordered panel with a title.
+fn panel(app: &App, title: &str) -> Block<'static> {
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(title.to_string(), dim(app)));
+    if app.color {
+        b.border_style(Style::default().fg(Color::DarkGray))
+    } else {
+        b
+    }
 }
 
 fn outcome_word(d: Decision) -> &'static str {
@@ -106,15 +143,11 @@ fn class_tag(c: Class) -> &'static str {
     }
 }
 
-/// The single-accent style for a row, by decision. Words still carry the meaning.
-fn row_style(app: &App, d: Decision) -> Style {
-    if !app.color {
-        return Style::default();
-    }
+fn decision_color(d: Decision) -> Color {
     match d {
-        Decision::Deny => Style::default().fg(DANGER),
-        Decision::Hold => Style::default().fg(ACCENT),
-        Decision::Allow => Style::default(),
+        Decision::Allow => OKGREEN,
+        Decision::Deny => DANGER,
+        Decision::Hold => ACCENT,
     }
 }
 
@@ -123,101 +156,130 @@ fn fmt_time(ev: &LoggedEvent) -> String {
     ev.ts.format(&f).unwrap_or_else(|_| "--:--:--".into())
 }
 
-fn render_table(f: &mut Frame, app: &App, area: Rect) {
+fn render_list(f: &mut Frame, app: &App, area: Rect) {
     let visible = app.visible();
-    let header = Row::new(["", "time", "agent", "outcome", "command"])
+    let header = Row::new(["time", "agent", "outcome", "command"])
         .style(dim(app))
         .height(1);
 
-    let rows = visible.iter().enumerate().map(|(i, ev)| {
-        let marker = if i == app.selected { "›" } else { " " };
-        let command = format!("{}{}", class_tag(ev.class), ev.command);
-        let mut style = row_style(app, ev.decision);
-        if i == app.selected {
-            style = style.add_modifier(Modifier::REVERSED);
-        }
+    let rows = visible.iter().map(|ev| {
+        let outcome = Cell::from(Span::styled(
+            outcome_word(ev.decision),
+            accent_fg(app, decision_color(ev.decision)),
+        ));
+        let command = Line::from(vec![
+            Span::styled(
+                class_tag(ev.class),
+                accent_fg(app, decision_color(ev.decision)),
+            ),
+            Span::raw(ev.command.clone()),
+        ]);
         Row::new(vec![
-            Cell::from(marker),
             Cell::from(fmt_time(ev)),
             Cell::from(truncate(&ev.agent, 12)),
-            Cell::from(outcome_word(ev.decision)),
+            outcome,
             Cell::from(command),
         ])
-        .style(style)
     });
 
     let widths = [
-        Constraint::Length(2),
         Constraint::Length(8),
         Constraint::Length(12),
         Constraint::Length(8),
         Constraint::Min(10),
     ];
-    f.render_widget(Table::new(rows, widths).header(header), area);
+    let highlight = if app.color {
+        Style::default()
+            .bg(Color::Indexed(236))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().add_modifier(Modifier::REVERSED)
+    };
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(panel(app, " timeline "))
+        .row_highlight_style(highlight)
+        .highlight_symbol("› ");
+
+    let mut state = TableState::default().with_selected(Some(app.selected));
+    f.render_stateful_widget(table, area, &mut state);
 }
 
-fn render_detail(f: &mut Frame, app: &App, area: Rect) {
+fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
+    let block = panel(
+        app,
+        if full {
+            " detail · esc to go back "
+        } else {
+            " detail "
+        },
+    );
     let Some(ev) = app.selected_event() else {
-        render_table(f, app, area);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "Select a row to inspect it.",
+                dim(app),
+            )))
+            .block(block),
+            area,
+        );
         return;
     };
-    let accent = row_style(app, ev.decision);
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Reserve a gauge row for held/ambiguous items that carry a risk score.
+    let (top, gauge_area) = if ev.risk.is_some() && inner.height >= 4 {
+        let parts = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).split(inner);
+        (parts[0], Some(parts[1]))
+    } else {
+        (inner, None)
+    };
+
+    let label = |k: &str| Span::styled(format!("{k:<9}"), dim(app));
     let mut lines = vec![
         Line::from(Span::styled(
             format!("{} · {}", outcome_word(ev.decision), ev.class.as_str()),
-            accent.add_modifier(Modifier::BOLD),
+            accent_fg(app, decision_color(ev.decision)).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("command  ", dim(app)),
-            Span::raw(ev.command.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("agent    ", dim(app)),
-            Span::raw(ev.agent.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("when     ", dim(app)),
-            Span::raw(fmt_time(ev)),
-        ]),
-        Line::from(vec![
-            Span::styled("reason   ", dim(app)),
-            Span::raw(ev.reason.clone()),
-        ]),
+        Line::from(vec![label("command"), Span::raw(ev.command.clone())]),
+        Line::from(vec![label("agent"), Span::raw(ev.agent.clone())]),
+        Line::from(vec![label("when"), Span::raw(fmt_time(ev))]),
+        Line::from(vec![label("reason"), Span::raw(ev.reason.clone())]),
     ];
     if let Some(summary) = &ev.summary {
         lines.push(Line::from(vec![
-            Span::styled("summary  ", dim(app)),
+            label("summary"),
             Span::raw(summary.clone()),
-        ]));
-    }
-    if let Some(risk) = ev.risk {
-        lines.push(Line::from(vec![
-            Span::styled("risk     ", dim(app)),
-            Span::raw(format!("{risk}/100")),
         ]));
     }
     if let Some(snap) = &ev.snapshot_id {
         lines.push(Line::from(vec![
-            Span::styled("snapshot ", dim(app)),
-            Span::raw(snap.clone()),
+            label("snapshot"),
+            Span::raw(snap.chars().take(12).collect::<String>()),
         ]));
     }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), top);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" detail · esc to go back ");
-    f.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    if let (Some(area), Some(risk)) = (gauge_area, ev.risk) {
+        let color = if ev.class == Class::Catastrophic {
+            DANGER
+        } else {
+            ACCENT
+        };
+        let gauge = Gauge::default()
+            .ratio((risk as f64 / 100.0).clamp(0.0, 1.0))
+            .label(format!("risk {risk}/100"))
+            .gauge_style(accent_fg(app, color))
+            .use_unicode(true);
+        f.render_widget(gauge, area);
+    }
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
-
     let help = "j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit";
     f.render_widget(Paragraph::new(Span::styled(help, dim(app))), rows[0]);
 
@@ -260,8 +322,12 @@ mod tests {
     fn ev(agent: &str, raw: &str, class: Class, decision: Decision) -> LoggedEvent {
         let log = EventLog::open_in_memory().unwrap();
         let cmd = ProposedCommand::new(agent, "/tmp", vec![raw.into()], raw);
-        log.log_event(&cmd, &Verdict::rules(class, decision, "rule"), None)
-            .unwrap()
+        let mut v = Verdict::rules(class, decision, "rule");
+        if class == Class::Ambiguous {
+            v.risk = Some(60);
+            v.summary = Some("needs your call".into());
+        }
+        log.log_event(&cmd, &v, None).unwrap()
     }
 
     fn app_with_events() -> App {
@@ -292,11 +358,19 @@ mod tests {
     }
 
     #[test]
+    fn split_layout_shows_detail_pane_when_wide() {
+        let mut app = app_with_events();
+        app.selected = 1;
+        let text = buffer_text(&app, 120, 24);
+        // The detail panel and its labels appear alongside the list.
+        assert!(text.contains("detail"));
+        assert!(text.contains("reason"));
+    }
+
+    #[test]
     fn reflows_small_and_large() {
-        // Just under the minimum → notice.
         let text = buffer_text(&app_with_events(), 50, 8);
         assert!(text.contains("too small"));
-        // Large terminal still renders the timeline without panicking.
         let big = buffer_text(&app_with_events(), 200, 60);
         assert!(big.contains("rm -rf /"));
     }
@@ -310,14 +384,22 @@ mod tests {
     }
 
     #[test]
-    fn detail_view_shows_fields() {
+    fn detail_view_shows_fields_and_risk() {
         let mut app = app_with_events();
-        app.selected = 1;
+        // Add an ambiguous (risk-bearing) row and open it.
+        app.set_events(vec![ev(
+            "qwen",
+            "make deploy",
+            Class::Ambiguous,
+            Decision::Hold,
+        )]);
+        app.selected = 0;
         app.on_key(crossterm::event::KeyCode::Enter);
         let text = buffer_text(&app, 80, 24);
         assert!(text.contains("detail"));
-        assert!(text.contains("rm -rf /"));
+        assert!(text.contains("make deploy"));
         assert!(text.contains("reason"));
+        assert!(text.contains("risk"));
     }
 
     #[test]
