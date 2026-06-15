@@ -5,6 +5,19 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Interception
+- **Native hooks for every major agent CLI**, not just Claude Code. `aegis init`
+  now detects and wires Qwen Code (`~/.qwen/settings.json`, `PreToolUse`), Gemini
+  CLI (`~/.gemini/settings.json`, `BeforeTool`), GitHub Copilot CLI
+  (`~/.copilot/hooks/aegis.json`, fail-closed `preToolUse`), Cursor CLI
+  (`~/.cursor/hooks.json`, `beforeShellExecution`), Codex CLI
+  (`~/.codex/config.toml`, `[[hooks.PreToolUse]]`), and OpenCode (a bundled
+  `tool.execute.before` plugin at `~/.config/opencode/plugin/aegis.js` that
+  bridges to the hook). One binary, `aegis-hook --agent <id>`, speaks each CLI's
+  dialect; the daemon round-trip and fail-closed-catastrophic policy are shared.
+  Each wire-up is idempotent and backs up any file it touches. See
+  [`docs/hooks.md`](docs/hooks.md).
+
 ### CLI & install
 - **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
   daemon writes its own PID file on startup; `stop` reads it and terminates it

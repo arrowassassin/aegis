@@ -414,16 +414,16 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
     let agents = home.as_deref().map(init::detect_agents).unwrap_or_default();
     if agents.is_empty() {
         println!(
-            "  • no agent config dirs detected (~/.claude, ~/.codex, ~/.cursor, ~/.qwen, ~/.gemini)"
+            "  • no agent config dirs detected (~/.claude, ~/.qwen, ~/.gemini, ~/.copilot, ~/.cursor, ~/.codex, ~/.config/opencode)"
         );
     }
     let mut mcp_agents = Vec::new();
     for agent in &agents {
         match agent.via {
-            init::Interception::Hook => {
-                wire_claude_hook(home.as_deref())?;
-                println!("  ✓ {}: wired via {}", agent.name, agent.via.as_str());
-            }
+            init::Interception::Hook(kind) => match wire_hook(kind, home.as_deref()) {
+                Ok(()) => println!("  ✓ {}: wired via {}", agent.name, agent.via.as_str()),
+                Err(e) => println!("  ✗ {}: could not wire ({e})", agent.name),
+            },
             init::Interception::Mcp => {
                 mcp_agents.push(agent.name);
                 println!("  • {}: intercept via {}", agent.name, agent.via.as_str());
@@ -464,29 +464,109 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
     Ok(())
 }
 
-fn wire_claude_hook(home: Option<&std::path::Path>) -> Result<()> {
+/// The `aegis-hook --agent <id>` command string a CLI's config should invoke.
+fn hook_command(agent: &str) -> String {
+    format!(
+        "{} --agent {agent}",
+        init::sibling_bin("aegis-hook").display()
+    )
+}
+
+/// Back up a user-owned file before we modify it, once, next to the original.
+fn backup_once(path: &std::path::Path) {
+    if path.exists() {
+        let backup = path.with_extension(format!(
+            "{}.aegis-bak",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("bak")
+        ));
+        let _ = std::fs::copy(path, backup);
+    }
+}
+
+fn write_file(path: &std::path::Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(path, contents).with_context(|| format!("write {}", path.display()))
+}
+
+/// Wire a single detected agent by writing its CLI-specific hook config.
+fn wire_hook(kind: init::HookKind, home: Option<&std::path::Path>) -> Result<()> {
     let Some(home) = home else {
         return Ok(());
     };
-    let settings_path = home.join(".claude").join("settings.json");
-    let existing = std::fs::read_to_string(&settings_path)
+    use init::HookKind::*;
+    match kind {
+        Claude => wire_settings_json(home, ".claude", "PreToolUse", "Bash", "claude"),
+        Qwen => wire_settings_json(
+            home,
+            ".qwen",
+            "PreToolUse",
+            "run_shell_command|Bash|Shell|ShellTool",
+            "qwen",
+        ),
+        Gemini => wire_settings_json(home, ".gemini", "BeforeTool", "run_shell_command", "gemini"),
+        Cursor => wire_cursor(home),
+        Copilot => wire_copilot(home),
+        Codex => wire_codex(home),
+        OpenCode => wire_opencode(home),
+    }
+}
+
+/// Claude/Qwen/Gemini: merge a hook into `~/.<dir>/settings.json`.
+fn wire_settings_json(
+    home: &std::path::Path,
+    dir: &str,
+    event: &str,
+    matcher: &str,
+    agent: &str,
+) -> Result<()> {
+    let path = home.join(dir).join("settings.json");
+    let existing = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
+    backup_once(&path);
+    let merged = init::merge_settings_hook(existing, event, matcher, &hook_command(agent));
+    write_file(&path, &serde_json::to_string_pretty(&merged)?)
+}
 
-    // Back up before modifying anything the user owns.
-    if settings_path.exists() {
-        let backup = settings_path.with_extension("json.aegis-bak");
-        let _ = std::fs::copy(&settings_path, &backup);
-    }
+/// Cursor: merge a `beforeShellExecution` hook into `~/.cursor/hooks.json`.
+fn wire_cursor(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".cursor").join("hooks.json");
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    backup_once(&path);
+    let merged = init::merge_cursor_hooks(existing, &hook_command("cursor"));
+    write_file(&path, &serde_json::to_string_pretty(&merged)?)
+}
 
-    let hook_cmd = init::sibling_bin("aegis-hook");
-    let merged = init::merge_claude_settings(existing, &hook_cmd.to_string_lossy());
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    std::fs::write(&settings_path, serde_json::to_string_pretty(&merged)?)
-        .with_context(|| format!("write {}", settings_path.display()))?;
-    Ok(())
+/// Copilot: write `~/.copilot/hooks/aegis.json` (a file Aegis owns wholesale).
+fn wire_copilot(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".copilot").join("hooks").join("aegis.json");
+    let cfg = init::copilot_hooks_config(&hook_command("copilot"));
+    write_file(&path, &serde_json::to_string_pretty(&cfg)?)
+}
+
+/// Codex: merge a `[[hooks.PreToolUse]]` block into `~/.codex/config.toml`.
+fn wire_codex(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".codex").join("config.toml");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    backup_once(&path);
+    let merged = init::merge_codex_toml(&existing, &hook_command("codex"))?;
+    write_file(&path, &merged)
+}
+
+/// OpenCode: write the JS bridge plugin to `~/.config/opencode/plugin/aegis.js`.
+fn wire_opencode(home: &std::path::Path) -> Result<()> {
+    let path = home
+        .join(".config")
+        .join("opencode")
+        .join("plugin")
+        .join("aegis.js");
+    let hook_bin = init::sibling_bin("aegis-hook");
+    let js = init::opencode_plugin_js(&hook_bin.to_string_lossy());
+    write_file(&path, &js)
 }
 
 /// Bare `aegis`: a short banner that tells you the current state and the next step.

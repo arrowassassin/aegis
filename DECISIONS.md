@@ -208,3 +208,17 @@ the locked product decisions this build implements.
   cargo install aegis-daemon --features aegis-model/llama, pick-model.sh from
   Hugging Face, persist AEGIS_MODEL_FILE). Reduced README/site image+text
   redundancy for a simpler, more trustworthy first impression.
+- Multi-CLI hooks: every supported agent now gets a *native* pre-tool hook, not
+  just Claude Code. Research (per-CLI docs) found each exposes a blocking
+  pre-exec hook: Claude/Qwen/Codex use Claude-style `hookSpecificOutput.
+  permissionDecision` (Qwen identical; Codex via TOML `[[hooks.PreToolUse]]`);
+  Gemini uses `BeforeTool` + `{decision:allow|deny}` (no ask → ambiguous holds
+  map to deny under monotonic-caution); Copilot uses a fail-closed `preToolUse`
+  command hook; Cursor uses `beforeShellExecution` + `{permission}`; OpenCode has
+  no external-command hook, only a JS `tool.execute.before` plugin (throw to
+  block), so `aegis init` writes a bundled bridge plugin. One `aegis-hook
+  --agent <id>` binary owns all dialects (parse + serialize in
+  `aegis-intercept/src/dialect.rs`); the daemon round-trip and
+  fail-closed-catastrophic policy stay shared in `hook.rs`. Codex TOML is wired by
+  text-append (not parse→serialize) to preserve user comments and dodge toml-rs's
+  table-ordering rules. MCP stays as the documented manual fallback.
