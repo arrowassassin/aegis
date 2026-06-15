@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aegis — install &amp; plugin</title>
+<meta name="description" content="Install Aegis, wire it to your agent, add the Claude Code plugin, and configure per-repo policy." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <nav>
+      <a href="index.html">HOME</a>
+      <a href="features.html">FEATURES</a>
+      <a class="active" href="install.html">INSTALL</a>
+      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero" style="border-top:none; padding-bottom:10px">
+    <h1 style="font-size:34px">INSTALL</h1>
+    <p class="sub" style="font-size:22px">Get the binaries, then wire your agent.
+      One command does both.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">&gt;</span> 1 · install + wire</h2>
+    <div class="cmd">
+      <button class="copy">copy</button>
+<pre>cargo install aegis        # or: brew install aegis  (when published)
+aegis init                 # detect agents, wire interception, start the daemon</pre>
+    </div>
+    <p class="muted">Then run a command through any wired agent — or a raw shell with
+      the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /
+      <span class="t-grn">aegis tui</span>.</p>
+    <ul class="checks">
+      <li>Sub-second warnings; SAFE commands add negligible overhead.</li>
+      <li>Fail-open by default (a down daemon never blocks you);
+        <span class="muted">AEGIS_FAIL_CLOSED=1</span> to flip.</li>
+      <li>Panic kill-switch: <span class="t-grn">aegis panic</span> halts everything,
+        <span class="t-grn">aegis resume</span> clears it.</li>
+    </ul>
+  </section>
+
+  <section id="plugin">
+    <h2><span class="n">&gt;</span> 2 · claude code plugin</h2>
+    <p class="lead">Aegis ships as a Claude Code plugin + marketplace. The plugin is a
+      thin wiring layer; the binaries come from cargo/Homebrew.</p>
+    <div class="cmd">
+      <button class="copy">copy</button>
+<pre>/plugin marketplace add arrowassassin/aegis
+/plugin install aegis@aegis</pre>
+    </div>
+    <p class="muted">It registers a <span class="t-grn">PreToolUse</span> hook
+      (→&nbsp;aegis-hook) and the <span class="t-grn">aegis-exec</span> MCP server
+      (→&nbsp;aegis-mcp). Ships disabled until you trust it.</p>
+  </section>
+
+  <section id="policy">
+    <h2><span class="n">&gt;</span> 3 · per-repo policy</h2>
+    <p class="lead">Commit an <span class="muted">.aegis.toml</span> to tune Aegis per
+      project: set the mode, pre-allow known-safe patterns, force-deny others, and
+      set the unattended risk threshold.</p>
+    <div class="cmd">
+      <button class="copy">copy</button>
+<pre># .aegis.toml
+mode = "attended"      # attended · unattended · notify
+threshold = 50         # unattended: deny ambiguous at/above this risk
+
+[rules]
+allow = ["cargo run", "rm -rf target", "rm -rf node_modules"]
+deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
+    </div>
+    <p class="muted">An <span class="muted">allow</span> rule tames the ambiguous band
+      but never downgrades a rule-detected catastrophic command — that hard floor
+      always stands.</p>
+  </section>
+
+  <section id="commands">
+    <h2><span class="n">&gt;</span> 4 · command cheat-sheet</h2>
+    <div class="term">
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis --help</span></div>
+<pre>
+<span class="t-grn">aegis init</span>           detect agents, wire interception, start daemon
+<span class="t-grn">aegis status</span>         daemon / socket / log / chain / kill-switch
+<span class="t-grn">aegis log</span> [-n N]     recent command timeline
+<span class="t-grn">aegis tui</span>            live, interactive timeline
+<span class="t-grn">aegis queue</span>          commands held for approval
+<span class="t-grn">aegis approve</span> &lt;id&gt;   release a held command (agent proceeds)
+<span class="t-grn">aegis deny</span> &lt;id&gt;      reject a held command
+<span class="t-grn">aegis undo</span> [--session] restore snapshotted files
+<span class="t-grn">aegis watch</span> &lt;path&gt;   FS-watcher backstop for un-intercepted changes
+<span class="t-grn">aegis panic</span> / <span class="t-grn">resume</span>  kill-switch on / off
+</pre>
+    </div>
+  </section>
+
+  <section id="docs">
+    <h2><span class="n">&gt;</span> docs</h2>
+    <div class="cols two">
+      <ul class="checks">
+        <li><a href="https://github.com/arrowassassin/aegis/blob/main/README.md">README &amp; quick start</a></li>
+        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/queue.md">Approval queue</a></li>
+        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/model.md">The Tier-2 model</a></li>
+      </ul>
+      <ul class="checks">
+        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/policy.md">Policy (.aegis.toml)</a></li>
+        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/mcp.md">MCP / aegis-exec</a></li>
+        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/demo.md">The 30-second demo</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="spine">
+    <b>Security spine.</b> Rules block; the model only explains and scores the
+    ambiguous band (escalation-only). The raw command is always shown verbatim. The
+    log is append-only and hash-chained. No network egress except the pinned,
+    checksummed model download. Secret <em>reads</em> are caught; their contents are
+    never logged.
+  </div>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a></p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

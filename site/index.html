@@ -14,14 +14,11 @@
 
 <header class="nav">
   <div class="wrap">
-    <span class="brand">&#9638; AEGIS<span class="blink">_</span></span>
+    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
     <nav>
-      <a href="#what">WHAT</a>
-      <a href="#flow">HOW</a>
-      <a href="#features">FEATURES</a>
-      <a href="#install">INSTALL</a>
-      <a href="#plugin">PLUGIN</a>
-      <a href="#docs">DOCS</a>
+      <a class="active" href="index.html">HOME</a>
+      <a href="features.html">FEATURES</a>
+      <a href="install.html">INSTALL</a>
       <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
     </nav>
   </div>
@@ -29,16 +26,15 @@
 
 <main class="wrap">
 
-  <!-- HERO -->
   <section class="hero" style="border-top:none">
     <h1>AEGIS</h1>
     <p class="sub">A local-first safety layer for AI coding agents. It catches the
       dangerous command <b>before</b> it runs.</p>
     <div class="cta">
-      <a class="btn" href="#install">GET STARTED</a>
-      <a class="btn alt" href="https://github.com/arrowassassin/aegis">VIEW SOURCE</a>
+      <a class="btn" href="install.html">GET STARTED</a>
+      <a class="btn alt" href="features.html">SEE FEATURES</a>
     </div>
-    <p class="note">Rust &middot; no kernel code &middot; nothing leaves your machine</p>
+    <p class="note">Rust &middot; agent-agnostic &middot; nothing leaves your machine</p>
 
     <div class="term" style="text-align:left; max-width:760px; margin:26px auto 0">
       <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i>
@@ -57,7 +53,6 @@
     <p class="note" style="margin-top:14px">↑ a real frame from the running tool</p>
   </section>
 
-  <!-- WHAT -->
   <section id="what">
     <h2><span class="n">&gt;</span> what is it</h2>
     <p class="lead">AI coding agents now run real commands on real machines —
@@ -73,218 +68,72 @@
       an LLM, so it can't be argued past by prompt injection. The raw command is
       always shown verbatim. The log is append-only and hash-chained.
     </div>
-
     <p class="muted">Agent-agnostic from day one: Claude Code, Qwen, Codex, Gemini,
       or any custom/MCP agent — via a native hook, an MCP server, or a $PATH shim.</p>
   </section>
 
-  <!-- FLOW -->
   <section id="flow">
     <h2><span class="n">&gt;</span> how it works</h2>
-    <p class="lead">Three interception points normalize to one event. A resident
-      daemon decides in microseconds and records everything.</p>
     <div class="flow">
       <div class="box"><h4>AGENT</h4><p>proposes a command</p></div>
       <div class="arrow">▶</div>
-      <div class="box"><h4>INTERCEPT</h4><p>hook · MCP · $PATH shim → one ProposedCommand</p></div>
+      <div class="box"><h4>INTERCEPT</h4><p>hook · MCP · $PATH shim → one event</p></div>
       <div class="arrow">▶</div>
-      <div class="box warn"><h4>DECIDE</h4><p>Tier-1 rules → SAFE / CATASTROPHIC / AMBIGUOUS; Tier-2 model scores the middle</p></div>
+      <div class="box warn"><h4>DECIDE</h4><p>Tier-1 rules; Tier-2 model scores the middle</p></div>
       <div class="arrow">▶</div>
-      <div class="box"><h4>SNAPSHOT + LOG</h4><p>reversible + hash-chained audit</p></div>
+      <div class="box"><h4>SNAPSHOT + LOG</h4><p>reversible + hash-chained</p></div>
     </div>
     <p class="muted">SAFE auto-allows on a model-free fast path (~microseconds).
-      CATASTROPHIC is a hard floor. AMBIGUOUS is held for you, or scored against a
+      CATASTROPHIC is a hard floor. AMBIGUOUS is held for you — or scored against a
       threshold when you're away.</p>
   </section>
 
-  <!-- FEATURES -->
-  <section id="features">
-    <h2><span class="n">&gt;</span> features &amp; flow</h2>
-    <p class="lead muted">Every frame below is real output captured from the binaries.</p>
-
-    <div class="grid">
-
-      <div class="feat">
-        <h3>1 · The gate — held before it runs</h3>
-        <p>Catastrophic and ambiguous commands pause with a calm "hold card": one
-          plain-English line, the raw command, and three keys.
-          <span class="muted">[a]llow once · [d]eny · [r] always-allow-here.</span></p>
-        <div class="term">
-          <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">PATH=…/shims rm -rf src</span></div>
+  <section id="tui">
+    <h2><span class="n">&gt;</span> the live TUI</h2>
+    <p class="lead">A real <span class="muted">ratatui</span> app over the live event
+      log — bordered panels, a detail pane, severity colors, and a risk gauge.
+      Navigate, filter, open detail, approve/deny a held action, undo — all without
+      leaving the terminal.</p>
+    <div class="term wide">
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis tui</span></div>
 <pre>
-<span class="t-dim">────────────────────────────────────────────────────────────</span>
-<span class="t-red">⚠ Aegis hold — This command is catastrophic and cannot be undone.</span>
-<span class="t-dim">  recursively deletes files and directories. This is hard or impossible to undo.</span>
-
-    <span class="t-b">rm -rf src</span>
-
-  <span class="t-amb">[a] allow once   [d] deny   [r] always allow here</span>
-<span class="t-dim">────────────────────────────────────────────────────────────</span>
+▦ Aegis  timeline                                                                                             6 events
+╭ timeline ────────────────────────────────────────────────────────╮╭ detail ────────────────────────────────────────╮
+│  time     agent        outcome  command                          ││held · catastrophic                             │
+│  02:42:32 claude-code  allowed  git status                       ││                                                │
+│  02:42:32 claude-code  allowed  cargo test                       ││command  git push --force origin main           │
+│  02:42:32 qwen         held     [ambiguous] make deploy          ││agent    shim                                   │
+│› 02:42:32 shim         held     [catastrophic] git push --force o││when     02:42:32                               │
+│  02:42:32 shim         denied   [catastrophic] rm -rf build      ││reason   rule                                   │
+│  02:42:32 claude-code  allowed  npm run lint                     ││summary  Force-pushes, overwriting remote       │
+│                                                                  ││history.                                        │
+│                                                                  ││                                                │
+│                                                                  ││                                                │
+│                                                                  ││█████████████████████████████████████████████▋  │
+│                                                                  ││██████████████████risk 95/100 ███████████████▋  │
+╰──────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
+j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
 </pre>
-        </div>
-      </div>
-
-      <div class="feat">
-        <h3>2 · The timeline — one cross-agent log</h3>
-        <p>Every command from every wired agent, on a tamper-evident, hash-chained
-          record. Calm by default; the one danger accent appears only when it must.</p>
-        <div class="term">
-          <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis log</span></div>
-<pre>
-<span class="t-dim">time      agent         outcome  command</span>
-<span class="t-dim">02:31:27  shim          </span><span class="t-amb">held</span>     <span class="t-red">[catastrophic]</span> rm -rf src
-<span class="t-dim">02:31:27  shim          </span><span class="t-red">denied   [catastrophic]</span> rm -rf src
-<span class="t-dim">02:31:27  shim          </span><span class="t-amb">held</span>     <span class="t-red">[catastrophic]</span> rm -rf src
-</pre>
-        </div>
-      </div>
-
-      <div class="feat">
-        <h3>3 · The TUI — live, interactive</h3>
-        <p>A real <span class="muted">ratatui</span> app over the live log:
-          <span class="muted">j/k</span> to move, <span class="muted">enter</span> for
-          detail, <span class="muted">a/d</span> to approve/deny a held action,
-          <span class="muted">u</span> to undo, <span class="muted">/</span> to filter.
-          Reflows to any size; restores the terminal on exit.</p>
-        <div class="term">
-          <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis tui</span></div>
-<pre>
-<span class="t-grn">Aegis</span><span class="t-dim">  timeline                                                       6 events</span>
-<span class="t-dim">   time     agent        outcome  command</span>
-   02:32:03 claude-code  <span class="t-grn">allowed</span>  git status
-   02:32:03 claude-code  <span class="t-grn">allowed</span>  cargo test
-   02:32:03 qwen         <span class="t-amb">held</span>     <span class="t-amb">[ambiguous]</span> make deploy
-<span class="t-sel">›  02:32:03 shim         held     [catastrophic] git push --force origin main</span>
-   02:32:03 shim         <span class="t-red">denied   [catastrophic]</span> rm -rf build
-   02:32:03 claude-code  <span class="t-grn">allowed</span>  npm run lint
-
-
-
-<span class="t-dim">j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit</span>
-</pre>
-        </div>
-      </div>
-
-      <div class="feat">
-        <h3>4 · The approval queue — agents proceed</h3>
-        <p>Held commands are queued, not dropped. Approve from the CLI, the TUI, or
-          let the agent wait in-band — once you approve, the command runs and the
-          result returns, so the agent keeps going.</p>
-        <div class="term">
-          <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis queue</span></div>
-<pre>
-<span class="t-dim">id          class          command</span>
-<span class="t-cy">50d56fd9</span>    <span class="t-red">catastrophic</span>   rm -rf src
-
-<span class="t-dim">Approve with `aegis approve &lt;id&gt;` or deny with `aegis deny &lt;id&gt;`.</span>
-</pre>
-        </div>
-      </div>
-
-      <div class="feat">
-        <h3>5 · Undo — nothing is unrecoverable</h3>
-        <p>Before an allowed destructive op, Aegis snapshots the paths it will touch
-          (reflink copy-on-write, plain-copy fallback).
-          <span class="muted">aegis undo</span> restores the last action;
-          <span class="muted">--session</span> restores the whole run.</p>
-        <div class="term">
-          <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis undo</span></div>
-<pre>
-<span class="t-grn">✓ undid `rm -rf src`</span> (1 path(s) restored)
-
-<span class="t-dim">Restored 1 snapshot(s). Note: undo covers files only — not network
-calls, external APIs, or already-pushed commits.</span>
-</pre>
-        </div>
-      </div>
-
-      <div class="feat">
-        <h3>6 · One-command setup + status</h3>
-        <p><span class="muted">aegis init</span> detects your agents, wires the hook /
-          MCP / shim, and starts the daemon. <span class="muted">aegis status</span>
-          shows health — including the hash chain and the panic kill-switch.</p>
-        <div class="cols two">
-          <div class="term">
-            <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis init</span></div>
-<pre>
-aegis init
-
-  <span class="t-grn">✓</span> shim: linked 9 commands in ~/.local/share/aegis/shims
-  <span class="t-dim">• no agent dirs detected (~/.claude, ~/.codex, …)</span>
-  <span class="t-grn">✓</span> daemon started on ~/run/aegis.sock
-
-Done. Try: aegis status
-</pre>
-          </div>
-          <div class="term">
-            <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis status</span></div>
-<pre>
-aegis 0.1.0
-  daemon:  <span class="t-grn">running</span>
-  socket:  ~/run/aegis.sock
-  log:     ~/.local/share/aegis/events.db
-  events:  3
-  chain:   <span class="t-grn">intact</span>
-</pre>
-          </div>
-        </div>
-      </div>
-
     </div>
+    <p class="note">Calm by default; the one danger accent appears only when it must.
+      Honors <span class="muted">NO_COLOR</span>; reflows from 80×24 up.</p>
   </section>
 
-  <!-- INSTALL -->
-  <section id="install">
-    <h2><span class="n">&gt;</span> install</h2>
-    <p class="lead">Get the binaries, then wire your agent. One command does both.</p>
-    <div class="cmd">
-      <button class="copy">copy</button>
-<pre>cargo install aegis        # or: brew install aegis  (when published)
-aegis init                 # detect agents, wire interception, start the daemon</pre>
+  <section id="highlights">
+    <h2><span class="n">&gt;</span> why it's different</h2>
+    <div class="cards">
+      <div class="card"><h3>Deterministic gate</h3>
+        <p>Rules block, not an LLM. <span class="k">Zero</span> catastrophic-as-safe,
+          enforced by a golden corpus + property tests.</p></div>
+      <div class="card"><h3>Reversible</h3>
+        <p>Snapshots before destructive ops (reflink CoW). <span class="k">aegis undo</span>
+          brings files back — last action or whole session.</p></div>
+      <div class="card"><h3>One cross-agent log</h3>
+        <p>Every command from every agent on one <span class="k">hash-chained</span>,
+          tamper-evident timeline you can scrub in the TUI.</p></div>
     </div>
-    <p class="muted">Then run a command through any wired agent — or a raw shell with
-      the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /
-      <span class="t-grn">aegis tui</span>.</p>
-
-    <ul class="checks">
-      <li>Sub-second warnings; SAFE commands add negligible overhead.</li>
-      <li>Fail-open by default (a down daemon never blocks you);
-        <span class="muted">AEGIS_FAIL_CLOSED=1</span> to flip.</li>
-      <li>Panic kill-switch: <span class="t-grn">aegis panic</span> halts everything,
-        <span class="t-grn">aegis resume</span> clears it.</li>
-    </ul>
-  </section>
-
-  <!-- PLUGIN -->
-  <section id="plugin">
-    <h2><span class="n">&gt;</span> claude code plugin</h2>
-    <p class="lead">Aegis ships as a Claude Code plugin + marketplace. The plugin is a
-      thin wiring layer; the binaries come from cargo/Homebrew.</p>
-    <div class="cmd">
-      <button class="copy">copy</button>
-<pre>/plugin marketplace add arrowassassin/aegis
-/plugin install aegis@aegis</pre>
-    </div>
-    <p class="muted">It registers a <span class="t-grn">PreToolUse</span> hook
-      (→&nbsp;aegis-hook) and the <span class="t-grn">aegis-exec</span> MCP server
-      (→&nbsp;aegis-mcp). Ships disabled until you trust it.</p>
-  </section>
-
-  <!-- DOCS -->
-  <section id="docs">
-    <h2><span class="n">&gt;</span> docs</h2>
-    <div class="cols two">
-      <ul class="checks">
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/README.md">README &amp; quick start</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/queue.md">Approval queue — how agents proceed</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/model.md">The Tier-2 model</a></li>
-      </ul>
-      <ul class="checks">
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/policy.md">Policy (.aegis.toml)</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/mcp.md">MCP / aegis-exec</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/demo.md">The 30-second demo</a></li>
-      </ul>
-    </div>
+    <p class="muted" style="margin-top:22px">See all six features, each with a real
+      captured frame → <a href="features.html">features</a>.</p>
   </section>
 
 </main>
@@ -294,7 +143,7 @@ aegis init                 # detect agents, wire interception, start the daemon<
     <p><span class="brand" style="font-size:11px">&#9638; AEGIS</span> &nbsp; honest
       guarantee: <em>nothing is unrecoverable</em> — not "nothing runs un-warned".</p>
     <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a>
-      · all terminal frames on this page are real captured output.</p>
+      · every terminal frame on this site is real captured output.</p>
   </div>
 </footer>
 
