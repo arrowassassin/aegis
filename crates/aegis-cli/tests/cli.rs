@@ -158,10 +158,19 @@ fn init_print_path_emits_export_line() {
 
 #[test]
 fn bare_invocation_prints_banner() {
-    let out = aegis().output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    // Point at a dead socket + clean data dir so the banner deterministically
+    // reports "not running" and suggests `aegis init`.
+    let out = aegis()
+        .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+        .env("AEGIS_DB", tmp.path().join("events.db"))
+        .env("AEGIS_DATA_DIR", tmp.path())
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("local-first"));
+    assert!(text.contains("not running"));
     assert!(text.contains("aegis init"));
 }
 

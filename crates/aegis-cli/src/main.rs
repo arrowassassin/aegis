@@ -195,12 +195,7 @@ fn parse_instant(s: &str) -> Result<time::OffsetDateTime> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        None => {
-            println!("aegis {}", env!("CARGO_PKG_VERSION"));
-            println!("A local-first safety layer for AI coding agents.");
-            println!("Run `aegis --help` for usage, or `aegis init` to get started.");
-            Ok(())
-        }
+        None => cmd_banner(),
         Some(Command::Init {
             no_daemon,
             print_path,
@@ -491,6 +486,26 @@ fn wire_claude_hook(home: Option<&std::path::Path>) -> Result<()> {
     }
     std::fs::write(&settings_path, serde_json::to_string_pretty(&merged)?)
         .with_context(|| format!("write {}", settings_path.display()))?;
+    Ok(())
+}
+
+/// Bare `aegis`: a short banner that tells you the current state and the next step.
+fn cmd_banner() -> Result<()> {
+    println!("aegis {}", env!("CARGO_PKG_VERSION"));
+    println!("A local-first safety layer for AI coding agents.");
+    println!();
+    if aegis_daemon::kill_switch_path().exists() {
+        println!("  ⚠ KILL-SWITCH ENGAGED — all agent actions are denied.");
+        println!("    run `aegis resume` to clear it.");
+    } else if Client::is_daemon_running() {
+        println!("  ✓ running and guarding your machine.");
+        println!("    `aegis tui` (live timeline) · `aegis status` · `aegis stop`");
+    } else {
+        println!("  • not running yet.");
+        println!("    run `aegis init` to detect your agents and start the daemon.");
+    }
+    println!();
+    println!("Run `aegis --help` for all commands.");
     Ok(())
 }
 
