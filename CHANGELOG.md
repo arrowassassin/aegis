@@ -40,6 +40,11 @@ All notable changes to Aegis are documented here. The format loosely follows
 - **TUI**: the risk gauge is now an auto-width, single-row meter (no full-width
   white block); the detail pane shows `session` and a `redacted` headline;
   redacted events drop out of the live timeline automatically.
+- **TUI filtering & session column**: the `/` filter now understands structured
+  tokens — `agent:<name>`, `session:<id>`, `since:<age>`, `before:<age>` (age =
+  `30m`/`2h`/`3d`/`day`/`week`/`month`) — combinable with free text (AND). A
+  short `session` column appears on wide terminals (full id stays in the detail
+  pane), so no horizontal scroll is needed.
 
 ### Docs/site
 - **Autoplaying cast** (`docs/img/cast.svg`, mirrored to `site/cast.svg`): one
