@@ -271,9 +271,10 @@ fn init_starts_daemon_and_status_reports_running() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("daemon"));
 
     // Status should now see a running daemon. Poll: the daemon binds
-    // asynchronously and a loaded CI runner can be slow.
+    // asynchronously and a loaded CI runner can be slow — 5s wasn't enough
+    // on the Ubuntu runner under contention, so give it ~20s.
     let mut text = String::new();
-    for _ in 0..50 {
+    for _ in 0..200 {
         let mut status = aegis();
         status.arg("status");
         common(&mut status);

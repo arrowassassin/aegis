@@ -346,9 +346,12 @@ impl EventLog {
     /// List the still-pending queued commands, oldest first.
     pub fn list_pending(&self) -> Result<Vec<PendingItem>, LogError> {
         let mut stmt = self.conn.prepare(
-            // rowid tiebreaks ts so insertion order is deterministic even when two
-            // commands enqueue within the same timestamp tick (seen on Windows).
-            "SELECT command, class, reason, ts FROM pending WHERE status = 'pending' ORDER BY ts ASC, rowid ASC",
+            // Order by rowid alone — it IS insertion order. We used to lead with
+            // `ts ASC` and tiebreak on rowid, but the Windows runner's wall clock
+            // can step backwards by a few ms (NTP slew on the VM host), which
+            // made ts(second insert) < ts(first insert) and put the newer row
+            // before the older one. Rowid is monotonic, so it doesn't care.
+            "SELECT command, class, reason, ts FROM pending WHERE status = 'pending' ORDER BY rowid ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((
