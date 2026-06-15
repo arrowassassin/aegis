@@ -8,28 +8,28 @@
 <text x="74" y="22" font-size="11" fill="#8b95ad">agent proposes: rm -rf src</text>
 <text x="18" y="48" font-size="15" xml:space="preserve">
 </text>
-<text x="18" y="68" font-size="15" xml:space="preserve">
+<text x="18" y="68" font-size="15" xml:space="preserve" textLength="600.0" lengthAdjust="spacing">
 <tspan fill="#8b95ad">────────────────────────────────────────────────────────────</tspan>
 </text>
-<text x="18" y="88" font-size="15" xml:space="preserve">
+<text x="18" y="88" font-size="15" xml:space="preserve" textLength="650.0" lengthAdjust="spacing">
 <tspan fill="#ff5d5d">⚠&#160;Aegis&#160;hold&#160;—&#160;This&#160;command&#160;is&#160;catastrophic&#160;and&#160;cannot&#160;be&#160;undone.</tspan>
 </text>
-<text x="18" y="108" font-size="15" xml:space="preserve">
+<text x="18" y="108" font-size="15" xml:space="preserve" textLength="800.0" lengthAdjust="spacing">
 <tspan fill="#cdd6e6">&#160;&#160;recursively&#160;deletes&#160;files&#160;and&#160;directories.&#160;This&#160;is&#160;hard&#160;or&#160;impossible&#160;to&#160;undo.</tspan>
 </text>
 <text x="18" y="128" font-size="15" xml:space="preserve">
 </text>
-<text x="18" y="148" font-size="15" xml:space="preserve">
+<text x="18" y="148" font-size="15" xml:space="preserve" textLength="140.0" lengthAdjust="spacing">
 <tspan fill="#cdd6e6">&#160;&#160;&#160;&#160;</tspan>
 <tspan fill="#ffffff">rm&#160;-rf&#160;src</tspan>
 </text>
 <text x="18" y="168" font-size="15" xml:space="preserve">
 </text>
-<text x="18" y="188" font-size="15" xml:space="preserve">
+<text x="18" y="188" font-size="15" xml:space="preserve" textLength="510.0" lengthAdjust="spacing">
 <tspan fill="#cdd6e6">&#160;&#160;</tspan>
 <tspan fill="#ffd866">[a]&#160;allow&#160;once&#160;&#160;&#160;[d]&#160;deny&#160;&#160;&#160;[r]&#160;always&#160;allow&#160;here</tspan>
 </text>
-<text x="18" y="208" font-size="15" xml:space="preserve">
+<text x="18" y="208" font-size="15" xml:space="preserve" textLength="600.0" lengthAdjust="spacing">
 <tspan fill="#8b95ad">────────────────────────────────────────────────────────────</tspan>
 </text>
 </svg>

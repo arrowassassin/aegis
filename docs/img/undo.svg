@@ -6,15 +6,15 @@
 <rect x="36" y="12" width="11" height="11" fill="#ffd866"/>
 <rect x="54" y="12" width="11" height="11" fill="#5af78e"/>
 <text x="74" y="22" font-size="11" fill="#8b95ad">aegis undo</text>
-<text x="18" y="48" font-size="15" xml:space="preserve">
+<text x="18" y="48" font-size="15" xml:space="preserve" textLength="410.0" lengthAdjust="spacing">
 <tspan fill="#5af78e">✓&#160;undid&#160;`rm&#160;-rf&#160;src`&#160;(1&#160;path(s)&#160;restored)</tspan>
 </text>
 <text x="18" y="68" font-size="15" xml:space="preserve">
 </text>
-<text x="18" y="88" font-size="15" xml:space="preserve">
+<text x="18" y="88" font-size="15" xml:space="preserve" textLength="660.0" lengthAdjust="spacing">
 <tspan fill="#cdd6e6">Restored&#160;1&#160;snapshot(s).&#160;Note:&#160;undo&#160;covers&#160;files&#160;only&#160;—&#160;not&#160;network</tspan>
 </text>
-<text x="18" y="108" font-size="15" xml:space="preserve">
+<text x="18" y="108" font-size="15" xml:space="preserve" textLength="480.0" lengthAdjust="spacing">
 <tspan fill="#cdd6e6">calls,&#160;external&#160;APIs,&#160;or&#160;already-pushed&#160;commits.</tspan>
 </text>
 </svg>

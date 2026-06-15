@@ -65,7 +65,12 @@ def main():
     y = TOP + 4
     for line in lines:
         x = PADX
-        p.append(f'<text x="{x}" y="{y}" font-size="{FS}" xml:space="preserve">')
+        # Pin the whole line to a fixed grid (glyphs × CHARW) with uniform
+        # spacing, so box-drawing glyphs can't drift columns vs. letters even if
+        # the render font advances them differently.
+        glyphs = len(line)
+        grid = f' textLength="{glyphs * CHARW:.1f}" lengthAdjust="spacing"' if glyphs else ""
+        p.append(f'<text x="{x}" y="{y}" font-size="{FS}"{grid} xml:space="preserve">')
         for txt, col in colorize(line, rules):
             if not txt:
                 continue
