@@ -37,7 +37,7 @@
 
   <section class="hero" style="border-top:none; padding-bottom:10px">
     <h1 style="font-size:34px">FEATURES</h1>
-    <p class="sub" style="font-size:22px">Six features, six real frames. Everything
+    <p class="sub" style="font-size:22px">Every feature with a real captured frame. Everything
       below is output captured from the running binaries — no mockups.</p>
   </section>
 
@@ -156,6 +156,50 @@ aegis 0.1.0
     </div>
     <p class="muted" style="margin-top:22px">Ready to wire it up? →
       <a href="install.html">install</a>.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">7 &gt;</span> how it decides — deterministic AST analysis</h2>
+    <p class="lead">The block decision is <strong>LLM-free</strong>: fixed rules a
+      human wrote, never a model guessing. What makes it trustworthy is that Aegis
+      reads the <em>real shell structure</em> of a command, not its raw text.</p>
+    <div class="grid">
+      <div class="feat"><h3>Two passes, worst-wins</h3>
+        <p>A fast tokenizer <em>and</em> a true bash AST parser
+          (<span class="muted">brush-parser</span>, pure-Rust) — Aegis takes the
+          more cautious verdict. The AST sees what substring matching can't.</p></div>
+      <div class="feat"><h3>Catches hidden danger</h3>
+        <p>Commands buried in substitutions <span class="muted">$(…)</span>, backticks,
+          here-docs, subshells, and <span class="muted">if/for/while</span> blocks are
+          surfaced — <span class="muted">echo "$(rm -rf /)"</span> is caught, not waved through.</p></div>
+      <div class="feat"><h3>Fails toward caution</h3>
+        <p>A line Aegis can't fully parse is <span class="muted">held</span>, never
+          assumed safe. A parse failure can only <em>add</em> caution. The hard rule,
+          gated by a golden corpus: <strong>zero catastrophic-classified-as-safe</strong>.</p></div>
+      <div class="feat"><h3>Industry-standard basis</h3>
+        <p>Real AST static analysis (what ShellCheck and shell tooling use), with
+          categories in the spirit of MITRE ATT&amp;CK + GTFOBins — not the brittle
+          regex scanning that lets quoting and expansion slip through.</p></div>
+    </div>
+    <p class="muted" style="margin-top:18px">See it for yourself — this runs nothing:</p>
+    <div class="term">
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis test</span></div>
+<pre>
+$ <span class="t-grn">aegis test</span> "cd build &amp;&amp; rm -rf ../dist"
+command:   cd build &amp;&amp; rm -rf ../dist
+class:     <span class="t-red">⛔ CATASTROPHIC</span>   (rule: rm:recursive)
+with you:  blocked — the agent won't run it; you'd run it yourself, reversibly.
+
+Aegis sees these commands:
+  • cd build
+  • rm -rf ../dist
+
+Dry run: nothing was executed, logged, or sent anywhere.
+</pre>
+    </div>
+    <p class="note"><span class="t-grn">aegis test "&lt;command&gt;"</span> shows the
+      class, the rule that fired, what would happen, and the exact commands Aegis
+      parses out of your line — a safe way to explore the rules.</p>
   </section>
 
 </main>
