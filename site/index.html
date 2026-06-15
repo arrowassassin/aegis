@@ -41,8 +41,10 @@
     <div class="cta">
       <a class="btn" href="install.html">GET STARTED</a>
       <a class="btn alt" href="features.html">SEE FEATURES</a>
+      <a class="btn alt" href="https://github.com/arrowassassin/aegis">★ STAR ON GITHUB</a>
     </div>
     <p class="note">macOS · Linux · Windows &middot; works with every agent &middot; nothing leaves your machine</p>
+    <p class="note">★ if Aegis is useful to you, <a href="https://github.com/arrowassassin/aegis">leave a star</a> — it helps others find it.</p>
 
     <figure style="margin:26px auto 0; max-width:900px">
       <img src="cast.svg" alt="Aegis: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
@@ -102,29 +104,13 @@
       log — bordered panels, a detail pane, severity colors, and a risk gauge.
       Navigate, filter, open detail, approve/deny a held action, undo — all without
       leaving the terminal.</p>
-    <div class="term wide">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis tui</span></div>
-<pre>
-▦ Aegis  timeline                                                                                             6 events
-╭ timeline ────────────────────────────────────────────────────────╮╭ detail ────────────────────────────────────────╮
-│  time     agent        outcome  command                          ││held · catastrophic                             │
-│  02:42:32 claude-code  allowed  git status                       ││                                                │
-│  02:42:32 claude-code  allowed  cargo test                       ││command  git push --force origin main           │
-│  02:42:32 qwen         held     [ambiguous] make deploy          ││agent    shim                                   │
-│› 02:42:32 shim         held     [catastrophic] git push --force o││when     02:42:32                               │
-│  02:42:32 shim         denied   [catastrophic] rm -rf build      ││reason   rule                                   │
-│  02:42:32 claude-code  allowed  npm run lint                     ││summary  Force-pushes, overwriting remote       │
-│                                                                  ││history.                                        │
-│                                                                  ││                                                │
-│                                                                  ││                                                │
-│                                                                  ││                                                │
-│                                                                  ││risk 95/100  ███████████████████░░              │
-╰──────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
-j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
-</pre>
-    </div>
-    <p class="note">Calm by default; the one danger accent appears only when it must.
-      Honors <span class="muted">NO_COLOR</span>; reflows from 80×24 up.</p>
+    <figure style="margin:0">
+      <img src="tui.svg" alt="The Aegis TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
+           style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+    </figure>
+    <p class="note">Real rendered output. Calm by default; the one danger accent
+      appears only when it must. Honors <span class="muted">NO_COLOR</span>; reflows
+      from 80×24 up.</p>
   </section>
 
   <section id="highlights">

@@ -82,27 +82,10 @@
       <span class="muted">j/k</span> move, <span class="muted">enter</span> detail,
       <span class="muted">a/d</span> approve/deny, <span class="muted">u</span> undo,
       <span class="muted">/</span> filter, <span class="muted">q</span> quit.</p>
-    <div class="term wide">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis tui</span></div>
-<pre>
-▦ Aegis  timeline                                                                                             6 events
-╭ timeline ────────────────────────────────────────────────────────╮╭ detail ────────────────────────────────────────╮
-│  time     agent        outcome  command                          ││held · catastrophic                             │
-│  02:42:32 claude-code  allowed  git status                       ││                                                │
-│  02:42:32 claude-code  allowed  cargo test                       ││command  git push --force origin main           │
-│  02:42:32 qwen         held     [ambiguous] make deploy          ││agent    shim                                   │
-│› 02:42:32 shim         held     [catastrophic] git push --force o││when     02:42:32                               │
-│  02:42:32 shim         denied   [catastrophic] rm -rf build      ││reason   rule                                   │
-│  02:42:32 claude-code  allowed  npm run lint                     ││summary  Force-pushes, overwriting remote       │
-│                                                                  ││history.                                        │
-│                                                                  ││                                                │
-│                                                                  ││                                                │
-│                                                                  ││█████████████████████████████████████████████▋  │
-│                                                                  ││██████████████████risk 95/100 ███████████████▋  │
-╰──────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
-j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
-</pre>
-    </div>
+    <figure style="margin:0">
+      <img src="tui.svg" alt="The Aegis TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
+           style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+    </figure>
   </section>
 
   <section>

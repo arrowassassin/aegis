@@ -13,7 +13,7 @@ import re
 import sys
 
 PADX = 18
-CHARW = 9.3  # safe upper bound on real monospace advance at font-size 15
+CHARW = 10.0  # generous upper bound on real monospace advance at font-size 15
 
 TEXT_BODY = re.compile(r'<text x="18"[^>]*>(.*?)</text>', re.DOTALL)
 TSPAN = re.compile(r"<tspan[^>]*>(.*?)</tspan>", re.DOTALL)

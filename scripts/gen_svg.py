@@ -16,7 +16,7 @@ PAL = {
 }
 # CHARW is a safe upper bound on the real monospace advance at FS=15 (DejaVu Sans
 # Mono ≈9.03px); undersizing it clips the longest line and the TUI risk gauge.
-CHARW, LINEH, FS = 9.3, 20, 15
+CHARW, LINEH, FS = 10.0, 20, 15
 PADX, TOP = 18, 44  # title bar height ~36 + gap
 
 def colorize(line, rules):
