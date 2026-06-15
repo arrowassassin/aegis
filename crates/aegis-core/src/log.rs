@@ -144,9 +144,64 @@ impl EventLog {
                 updated_at   TEXT NOT NULL,
                 PRIMARY KEY (repo, command_hash)
             );
+
+            -- Snapshots taken before destructive ops, for `aegis undo`.
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id         TEXT PRIMARY KEY,
+                seq        INTEGER,
+                ts         TEXT NOT NULL,
+                command    TEXT NOT NULL,
+                manifest   TEXT NOT NULL,
+                reverted   INTEGER NOT NULL DEFAULT 0
+            );
             "#,
         )?;
         Ok(Self { conn })
+    }
+
+    /// Record a snapshot taken before a destructive command.
+    pub fn record_snapshot(&self, manifest: &crate::snapshot::Manifest) -> Result<(), LogError> {
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let json = serde_json::to_string(manifest)
+            .map_err(|e| LogError::Corrupt(format!("manifest serialize: {e}")))?;
+        let seq: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
+        self.conn.execute(
+            "INSERT INTO snapshots (id, seq, ts, command, manifest, reverted) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+            rusqlite::params![manifest.id, seq, now, manifest.command, json],
+        )?;
+        Ok(())
+    }
+
+    /// Load all snapshots not yet reverted, newest first.
+    pub fn unreverted_snapshots(&self) -> Result<Vec<crate::snapshot::Manifest>, LogError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT manifest FROM snapshots WHERE reverted = 0 ORDER BY rowid DESC")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let json = r?;
+            let m: crate::snapshot::Manifest = serde_json::from_str(&json)
+                .map_err(|e| LogError::Corrupt(format!("manifest parse: {e}")))?;
+            out.push(m);
+        }
+        Ok(out)
+    }
+
+    /// The most recent not-yet-reverted snapshot, if any.
+    pub fn latest_unreverted_snapshot(
+        &self,
+    ) -> Result<Option<crate::snapshot::Manifest>, LogError> {
+        Ok(self.unreverted_snapshots()?.into_iter().next())
+    }
+
+    /// Mark a snapshot as reverted (it has been undone).
+    pub fn mark_reverted(&self, id: &str) -> Result<(), LogError> {
+        self.conn
+            .execute("UPDATE snapshots SET reverted = 1 WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     /// Remember a per-repo decision for an exact command (always-allow / -deny).

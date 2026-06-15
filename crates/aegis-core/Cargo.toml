@@ -20,6 +20,7 @@ sha2.workspace = true
 hex.workspace = true
 rusqlite.workspace = true
 directories.workspace = true
+reflink-copy = "0.1.29"
 
 [dev-dependencies]
 tempfile.workspace = true

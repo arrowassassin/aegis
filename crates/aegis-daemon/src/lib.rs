@@ -39,6 +39,7 @@ pub struct Daemon {
     log: EventLog,
     mode: Mode,
     scorer: Box<dyn aegis_model::Scorer>,
+    snapshot_dir: PathBuf,
 }
 
 impl Daemon {
@@ -49,13 +50,23 @@ impl Daemon {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create data dir {}", parent.display()))?;
         }
+        let snapshot_dir = db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("snapshots");
         let log = EventLog::open(&db_path)
             .with_context(|| format!("open event log at {}", db_path.display()))?;
         Ok(Self {
             log,
             mode: Mode::default(),
             scorer: aegis_model::default_scorer(),
+            snapshot_dir,
         })
+    }
+
+    /// The directory snapshots are stored under.
+    pub fn snapshot_dir(&self) -> &std::path::Path {
+        &self.snapshot_dir
     }
 
     /// Swap in a specific scorer (used by tests).
@@ -156,14 +167,37 @@ impl Daemon {
         verdict
     }
 
-    /// Handle one proposal: decide, record to the append-only log, return verdict.
+    /// Handle one proposal: decide, snapshot if destructive+allowed, record, return.
     pub fn handle(&self, cmd: ProposedCommand) -> Verdict {
         let verdict = self.decide(&cmd);
-        if let Err(e) = self.log.log_event(&cmd, &verdict, None) {
+        let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
+        if let Err(e) = self.log.log_event(&cmd, &verdict, snapshot_id.as_deref()) {
             // Recording is best-effort at the IPC boundary; never crash the daemon.
             eprintln!("aegis-daemon: failed to record event: {e}");
         }
         verdict
+    }
+
+    /// Snapshot the paths a command will touch, when it is allowed and not Safe.
+    /// Returns the snapshot id to attach to the event, if one was taken.
+    fn maybe_snapshot(&self, cmd: &ProposedCommand, verdict: &Verdict) -> Option<String> {
+        if verdict.decision != Decision::Allow || verdict.class == aegis_core::Class::Safe {
+            return None;
+        }
+        match aegis_core::capture_snapshot(&self.snapshot_dir, cmd) {
+            Ok(Some(manifest)) => {
+                if let Err(e) = self.log.record_snapshot(&manifest) {
+                    eprintln!("aegis-daemon: failed to record snapshot: {e}");
+                    return None;
+                }
+                Some(manifest.id)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("aegis-daemon: snapshot failed: {e}");
+                None
+            }
+        }
     }
 
     /// Handle a human's resolution of a held command: record the final decision
@@ -180,7 +214,9 @@ impl Daemon {
             Decision::Hold => "human:hold",
         };
         let verdict = Verdict::rules(m.class, resolution.decision, reason);
-        self.log.log_event(cmd, &verdict, None)?;
+        // Snapshot before a human-approved destructive command runs.
+        let snapshot_id = self.maybe_snapshot(cmd, &verdict);
+        self.log.log_event(cmd, &verdict, snapshot_id.as_deref())?;
 
         if resolution.remember && resolution.decision != Decision::Hold {
             let repo = repo_key(&cmd.cwd);

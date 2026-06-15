@@ -100,6 +100,14 @@ All notable changes to Aegis are documented here. The format loosely follows
   a hard floor regardless of score; Safe stays on the model-free fast path.
   Documented in `docs/model.md`.
 
+- **Phase 3** — snapshots + `aegis undo`. Before an allowed destructive command,
+  the daemon captures the paths it will touch (`snapshot::predict_paths`) into a
+  content-addressed store using reflink CoW (`reflink-copy`) with a plain-copy
+  fallback, and records a manifest in a new `snapshots` table. `aegis undo`
+  restores the last action; `aegis undo --session` restores every not-yet-reverted
+  snapshot. Scope is stated plainly: files only — not network calls or pushed
+  commits. Safe commands are never snapshotted.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

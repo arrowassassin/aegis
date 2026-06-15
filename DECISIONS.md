@@ -85,3 +85,10 @@ the locked product decisions this build implements.
   refused). Graduated unattended uses policy.threshold (default 50). Catastrophic
   is never scored into an allow; Safe is never scored at all (fast path). The
   llama backend targets llama-cpp-2 0.1.x and is the one path not CI-compiled.
+- Phase 3: snapshots capture only paths that currently exist (predicted from
+  argv + redirect targets, resolved vs cwd); restore overwrites/recreates them.
+  Undo deliberately does NOT delete newly-created files (avoids acting on bogus
+  predicted tokens) — documented as files-only scope. reflink CoW via
+  reflink-copy with copy fallback. Daemon snapshots synchronously before
+  returning Allow, so files are intact at capture time and the shim execs after.
+  snapshots table lives in the same DB; undo is append-only (logs an undo event).

@@ -10,7 +10,7 @@ mod logview;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use aegis_core::EventLog;
+use aegis_core::{Class, Decision, EventLog, ProposedCommand, Verdict};
 use aegis_daemon::{default_db_path, ipc, Client};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -39,6 +39,12 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 20)]
         number: usize,
     },
+    /// Undo the last destructive action (or the whole session with --session).
+    Undo {
+        /// Undo every not-yet-reverted snapshot, newest first.
+        #[arg(long)]
+        session: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -53,7 +59,65 @@ fn main() -> Result<()> {
         Some(Command::Init { no_daemon }) => cmd_init(no_daemon),
         Some(Command::Status) => cmd_status(),
         Some(Command::Log { number }) => cmd_log(number),
+        Some(Command::Undo { session }) => cmd_undo(session),
     }
+}
+
+/// Where snapshots live: alongside the event-log database.
+fn snapshot_dir() -> PathBuf {
+    default_db_path()
+        .parent()
+        .map(|p| p.join("snapshots"))
+        .unwrap_or_else(|| std::env::temp_dir().join("aegis-snapshots"))
+}
+
+fn cmd_undo(session: bool) -> Result<()> {
+    let db = default_db_path();
+    if !db.exists() {
+        println!("Nothing to undo.");
+        return Ok(());
+    }
+    let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
+    let dir = snapshot_dir();
+
+    let targets = if session {
+        log.unreverted_snapshots()?
+    } else {
+        log.latest_unreverted_snapshot()?.into_iter().collect()
+    };
+
+    if targets.is_empty() {
+        println!("Nothing to undo.");
+        return Ok(());
+    }
+
+    for m in &targets {
+        aegis_core::restore_snapshot(&dir, m)
+            .with_context(|| format!("restore snapshot for `{}`", m.command))?;
+        log.mark_reverted(&m.id)?;
+        // Record the undo itself (append-only; never rewrite history).
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let raw = format!("undo {}", m.command);
+        let cmd = ProposedCommand::new("aegis", cwd, vec!["undo".into(), m.id.clone()], raw);
+        log.log_event(
+            &cmd,
+            &Verdict::rules(Class::Safe, Decision::Allow, "undo"),
+            None,
+        )?;
+        println!(
+            "✓ undid `{}` ({} path(s) restored)",
+            m.command,
+            m.entries.len()
+        );
+    }
+
+    println!();
+    println!(
+        "Restored {} snapshot(s). Note: undo covers files only — not network calls, \
+         external APIs, or already-pushed commits.",
+        targets.len()
+    );
+    Ok(())
 }
 
 fn home_dir() -> Option<PathBuf> {

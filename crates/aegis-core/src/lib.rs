@@ -15,12 +15,14 @@ pub mod memory;
 pub mod policy;
 pub mod rules;
 pub mod shell;
+pub mod snapshot;
 pub mod types;
 
 pub use log::{ChainStatus, EventLog, LogError, LoggedEvent, GENESIS_HASH};
 pub use memory::command_hash;
 pub use policy::{adjust_for_policy, Policy, PolicyAction};
 pub use rules::{classify, classify_and_decide, classify_line, decide, RuleMatch};
+pub use snapshot::{capture as capture_snapshot, restore as restore_snapshot, Manifest};
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

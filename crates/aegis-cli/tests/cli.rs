@@ -30,6 +30,60 @@ fn seed_log(db: &std::path::Path) {
 }
 
 #[test]
+fn undo_with_nothing_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = aegis()
+        .arg("undo")
+        .env("AEGIS_DB", tmp.path().join("events.db"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Nothing to undo"));
+}
+
+#[test]
+fn undo_restores_a_snapshotted_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("events.db");
+    let snaps = tmp.path().join("snapshots");
+    let work = tmp.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let file = work.join("data.txt");
+    std::fs::write(&file, b"original").unwrap();
+
+    // Seed a snapshot the same way the daemon would, then corrupt the file.
+    {
+        let log = EventLog::open(&db).unwrap();
+        let cmd = ProposedCommand::new(
+            "shim",
+            &work,
+            vec!["rm".into(), "data.txt".into()],
+            "rm data.txt",
+        );
+        let manifest = aegis_core::capture_snapshot(&snaps, &cmd).unwrap().unwrap();
+        log.record_snapshot(&manifest).unwrap();
+    }
+    std::fs::write(&file, b"corrupted").unwrap();
+
+    let out = aegis().arg("undo").env("AEGIS_DB", &db).output().unwrap();
+    assert!(
+        out.status.success(),
+        "undo failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("undid"));
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"original",
+        "file should be restored"
+    );
+
+    // Second undo finds nothing (snapshot marked reverted).
+    let out2 = aegis().arg("undo").env("AEGIS_DB", &db).output().unwrap();
+    assert!(String::from_utf8_lossy(&out2.stdout).contains("Nothing to undo"));
+}
+
+#[test]
 fn bare_invocation_prints_banner() {
     let out = aegis().output().unwrap();
     assert!(out.status.success());
