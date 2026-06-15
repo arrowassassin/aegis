@@ -1,5 +1,7 @@
 # The approval queue — how a held command proceeds
 
+![aegis queue](img/queue.svg)
+
 When Aegis **holds** a command, the agent is never left without an answer. How it
 proceeds depends on the path:
 

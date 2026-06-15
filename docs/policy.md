@@ -1,5 +1,7 @@
 # Policy (`.aegis.toml`)
 
+![The timeline reflects policy decisions](img/log.svg)
+
 Aegis reads two policy files and merges them, with the repo file overriding the
 global one:
 

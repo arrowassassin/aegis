@@ -1,5 +1,7 @@
 # The Tier-2 model (Phase 2)
 
+![The hold card shows the model summary and a risk meter](img/holdcard.svg)
+
 Aegis's decision to **block** a catastrophic command is always deterministic
 rules. The model never makes that call. Its only jobs are to **explain** (a
 one-sentence summary for the hold card) and to **score** the *ambiguous band*

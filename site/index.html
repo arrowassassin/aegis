@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Aegis — a safety layer for AI coding agents</title>
 <meta name="description" content="Aegis intercepts the commands an AI coding agent is about to run, warns you before they execute, makes destructive actions reversible, and keeps a tamper-evident log. Local-first, agent-agnostic, deterministic." />
+<meta property="og:title" content="Aegis — a safety layer for AI coding agents" />
+<meta property="og:description" content="Catches the dangerous command before it runs. Local-first, agent-agnostic, deterministic." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
@@ -20,6 +26,7 @@
       <a href="features.html">FEATURES</a>
       <a href="install.html">INSTALL</a>
       <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
 </header>
@@ -86,6 +93,14 @@
     <p class="muted">SAFE auto-allows on a model-free fast path (~microseconds).
       CATASTROPHIC is a hard floor. AMBIGUOUS is held for you — or scored against a
       threshold when you're away.</p>
+  </section>
+
+  <section id="cast">
+    <h2><span class="n">&gt;</span> watch the flow</h2>
+    <p class="lead">Agent proposes <span class="muted">rm -rf src</span> → Aegis holds
+      it → you deny → it's on the timeline. (Animated; pure SVG, no JS.)</p>
+    <img class="cast" src="flow.svg" alt="Aegis flow: propose, hold, deny, timeline"
+         width="760" height="300" loading="lazy" />
   </section>
 
   <section id="tui">

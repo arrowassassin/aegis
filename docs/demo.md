@@ -1,5 +1,7 @@
 # The 30-second demo
 
+![The gate: rm -rf held before it runs](img/holdcard.svg)
+
 > An AI agent proposes `rm -rf` → **Aegis holds it before it runs** → you press
 > `d` → it's blocked and on the tamper-evident timeline.
 

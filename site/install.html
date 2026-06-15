@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Aegis — install &amp; plugin</title>
 <meta name="description" content="Install Aegis, wire it to your agent, add the Claude Code plugin, and configure per-repo policy." />
+<meta property="og:title" content="Aegis — install & plugin" />
+<meta property="og:description" content="Install Aegis, wire your agent, add the Claude Code plugin." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
@@ -20,6 +26,7 @@
       <a href="features.html">FEATURES</a>
       <a class="active" href="install.html">INSTALL</a>
       <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
 </header>
@@ -41,7 +48,8 @@ aegis init                 # detect agents, wire interception, start the daemon<
     </div>
     <p class="muted">Then run a command through any wired agent — or a raw shell with
       the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /
-      <span class="t-grn">aegis tui</span>.</p>
+      <span class="t-grn">aegis tui</span>. Prefer Homebrew? See the
+      <a href="https://github.com/arrowassassin/aegis/blob/main/docs/homebrew.md">tap guide</a>.</p>
     <ul class="checks">
       <li>Sub-second warnings; SAFE commands add negligible overhead.</li>
       <li>Fail-open by default (a down daemon never blocks you);

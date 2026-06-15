@@ -10,10 +10,23 @@ destructive actions reversible, and keeps a tamper-evident record of everything
 every agent did on your machine. No kernel code, no OS-vendor approvals, no code
 leaves your machine.
 
+![Aegis holds a catastrophic command before it runs](docs/img/holdcard.svg)
+
 > **Security spine:** rules block, the model only explains. The decision to
 > hold/deny a catastrophic command is made by deterministic rules, never by an
 > LLM. The raw command is always shown verbatim. The event log is append-only and
 > hash-chained. See [`CLAUDE.md`](CLAUDE.md) for the full, non-negotiable rules.
+
+### See it
+
+The live TUI — bordered timeline + detail panels, a risk gauge (all real output):
+
+![Aegis TUI](docs/img/tui.svg)
+
+The cross-agent timeline and the approval queue:
+
+![aegis log](docs/img/log.svg)
+![aegis queue](docs/img/queue.svg)
 
 ## Status
 
