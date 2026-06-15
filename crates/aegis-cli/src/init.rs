@@ -21,6 +21,13 @@ pub const SHIM_COMMANDS: &[&str] = &[
     "dd",
     "shred",
     "mkfs",
+    // Shell wrappers: catch destructive payloads passed as `-c`/`-exec`/stdin
+    // even when the inner program is reached by absolute path or a builtin.
+    "bash",
+    "sh",
+    "zsh",
+    "find",
+    "xargs",
 ];
 
 /// A coding agent we detected on this machine.

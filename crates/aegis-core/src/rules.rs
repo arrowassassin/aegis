@@ -66,8 +66,16 @@ pub fn classify_and_decide(cmd: &ProposedCommand, mode: Mode) -> Verdict {
     Verdict::rules(m.class, decision, m.rule)
 }
 
+/// Max recursion depth when unwrapping shell-wrapper payloads (`bash -c "…"`,
+/// `find -exec …`, `xargs …`). Guards against pathological nesting.
+const MAX_WRAP_DEPTH: u8 = 8;
+
 /// Classify a raw command line (the entry point used by tests too).
 pub fn classify_line(raw: &str) -> RuleMatch {
+    classify_line_depth(raw, 0)
+}
+
+fn classify_line_depth(raw: &str, depth: u8) -> RuleMatch {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return RuleMatch::new(Class::Safe, "empty");
@@ -87,7 +95,7 @@ pub fn classify_line(raw: &str) -> RuleMatch {
             continue;
         }
         any_segment = true;
-        let m = classify_segment(seg);
+        let m = classify_segment_depth(seg, depth);
         if m.class.severity() > worst.class.severity() {
             worst = m;
         }
@@ -199,7 +207,7 @@ fn segment_command(raw: &str) -> Vec<String> {
 }
 
 /// Classify a single (non-chained) command segment.
-fn classify_segment(seg: &str) -> RuleMatch {
+fn classify_segment_depth(seg: &str, depth: u8) -> RuleMatch {
     let tokens = shell::split(seg);
     let argv = effective_argv(&tokens);
     if argv.is_empty() {
@@ -208,50 +216,168 @@ fn classify_segment(seg: &str) -> RuleMatch {
     let prog = program_name(argv[0]);
     let args: Vec<&str> = argv[1..].to_vec();
 
+    // Shell-wrapper evasion: a destructive payload hidden inside `bash -c "…"`,
+    // `find … -exec … ;`, or `xargs …` would otherwise be judged by the wrapper
+    // program (ambiguous) instead of the payload. Recursively classify each
+    // wrapped command and let it escalate this segment's class. Depth-guarded.
+    let mut worst = RuleMatch::new(Class::Safe, "safe:empty");
+    if depth < MAX_WRAP_DEPTH {
+        for sub in wrapped_commands(&prog, &args) {
+            let m = classify_line_depth(&sub, depth + 1);
+            if m.class.severity() > worst.class.severity() {
+                worst = RuleMatch::new(m.class, format!("wrapped:{prog}:{}", m.rule));
+            }
+        }
+        if worst.class == Class::Catastrophic {
+            return worst;
+        }
+    }
+
     // Catastrophic, per-program.
     if let Some(rule) = catastrophic_segment(&prog, &args, seg) {
         return RuleMatch::new(Class::Catastrophic, rule);
     }
 
-    // Confidently safe?
-    if is_safe(&prog, &args) {
-        return RuleMatch::new(Class::Safe, format!("safe:{prog}"));
+    // The wrapped payload may have raised the floor (e.g. ambiguous) even when
+    // the wrapper program itself looks safe — take the worst of the two.
+    let own = if is_safe(&prog, &args) {
+        RuleMatch::new(Class::Safe, format!("safe:{prog}"))
+    } else if has_clobber_redirect(&tokens) {
+        // A clobbering redirect bumps an otherwise-safe line to ambiguous.
+        RuleMatch::new(Class::Ambiguous, "redirect:clobber")
+    } else {
+        RuleMatch::new(Class::Ambiguous, format!("ambiguous:{prog}"))
+    };
+    if worst.class.severity() > own.class.severity() {
+        worst
+    } else {
+        own
     }
+}
 
-    // A clobbering redirect bumps an otherwise-safe line to ambiguous.
-    if has_clobber_redirect(&tokens) {
-        return RuleMatch::new(Class::Ambiguous, "redirect:clobber");
+/// Extract sub-commands carried as arguments by shell wrappers, for recursive
+/// classification: `sh -c "<script>"`, `find … -exec <cmd> ;`, `xargs <cmd>`.
+fn wrapped_commands(prog: &str, args: &[&str]) -> Vec<String> {
+    match prog {
+        "sh" | "bash" | "zsh" | "dash" | "ash" | "ksh" => {
+            // The token after `-c` (or `-lc`, `-ec`, …) is the script string.
+            if let Some(pos) = args
+                .iter()
+                .position(|a| a.starts_with('-') && a.contains('c'))
+            {
+                if let Some(script) = args.get(pos + 1) {
+                    return vec![(*script).to_string()];
+                }
+            }
+            Vec::new()
+        }
+        "find" => {
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < args.len() {
+                if matches!(args[i], "-exec" | "-execdir" | "-ok" | "-okdir") {
+                    i += 1;
+                    let mut cmd = Vec::new();
+                    while i < args.len() && args[i] != ";" && args[i] != "+" {
+                        // `{}` is find's placeholder; keep it as a literal token.
+                        cmd.push(args[i]);
+                        i += 1;
+                    }
+                    if !cmd.is_empty() {
+                        out.push(cmd.join(" "));
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            out
+        }
+        "xargs" => {
+            // Skip xargs' own options (and the values of the common value-taking
+            // ones); the first non-option token begins the command it runs.
+            let mut i = 0;
+            while i < args.len() {
+                let a = args[i];
+                if matches!(a, "-I" | "-i" | "-d" | "-E" | "-n" | "-P" | "-s" | "-L") {
+                    i += 2;
+                } else if a.starts_with('-') {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if i < args.len() {
+                vec![args[i..].join(" ")]
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
     }
-
-    RuleMatch::new(Class::Ambiguous, format!("ambiguous:{prog}"))
 }
 
 /// Strip leading env-assignments and `sudo`/`doas` (with a couple of their
 /// common flags) to find the real program and its arguments.
 fn effective_argv(tokens: &[String]) -> Vec<&str> {
     let mut i = 0;
-    // Leading VAR=value assignments.
-    while i < tokens.len() && is_env_assignment(&tokens[i]) {
-        i += 1;
-    }
-    // sudo / doas (and a few of their option forms).
-    if i < tokens.len() && matches!(tokens[i].as_str(), "sudo" | "doas") {
-        i += 1;
-        while i < tokens.len() {
-            match tokens[i].as_str() {
-                // options that take a value
-                "-u" | "--user" | "-g" | "--group" => i += 2,
-                // lone flags
-                t if t.starts_with('-') => i += 1,
-                _ => break,
-            }
-        }
-    }
-    // `env` prefix (and its VAR=value args).
-    if i < tokens.len() && tokens[i] == "env" {
-        i += 1;
-        while i < tokens.len() && (is_env_assignment(&tokens[i]) || tokens[i].starts_with('-')) {
+    // Peel transparent prefixes in a loop so combinations resolve to the real
+    // program, e.g. `sudo timeout 5 nohup rm -rf /` -> `rm`.
+    loop {
+        let start = i;
+        // Leading VAR=value assignments.
+        while i < tokens.len() && is_env_assignment(&tokens[i]) {
             i += 1;
+        }
+        match tokens.get(i).map(String::as_str) {
+            // sudo / doas (and a few of their option forms).
+            Some("sudo") | Some("doas") => {
+                i += 1;
+                while i < tokens.len() {
+                    match tokens[i].as_str() {
+                        "-u" | "--user" | "-g" | "--group" => i += 2,
+                        t if t.starts_with('-') => i += 1,
+                        _ => break,
+                    }
+                }
+            }
+            // `env` prefix (and its VAR=value / option args).
+            Some("env") => {
+                i += 1;
+                while i < tokens.len()
+                    && (is_env_assignment(&tokens[i]) || tokens[i].starts_with('-'))
+                {
+                    i += 1;
+                }
+            }
+            // Transparent launchers that just run the rest as a command.
+            Some("nohup") | Some("setsid") | Some("stdbuf") => {
+                i += 1;
+                // stdbuf carries -i/-o/-e buffering options before the command.
+                while i < tokens.len() && tokens[i].starts_with('-') {
+                    i += 1;
+                }
+            }
+            // `timeout [opts] DURATION cmd …`: skip opts (+values) and the duration.
+            Some("timeout") => {
+                i += 1;
+                while i < tokens.len() && tokens[i].starts_with('-') {
+                    if matches!(
+                        tokens[i].as_str(),
+                        "-s" | "--signal" | "-k" | "--kill-after"
+                    ) {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if i < tokens.len() {
+                    i += 1; // the duration positional
+                }
+            }
+            _ => {}
+        }
+        if i == start {
+            break;
         }
     }
     tokens[i..].iter().map(String::as_str).collect()
