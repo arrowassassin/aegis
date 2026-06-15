@@ -49,6 +49,9 @@ interprocess = "2.4.2"
 # CLI
 clap = { version = "4.6.1", features = ["derive"] }
 
+# Shell parsing (pure-Rust, MIT) — AST for the deterministic danger classifier.
+brush-parser = "0.4"
+
 # Config dirs
 directories = "6.0.0"
 
