@@ -67,10 +67,29 @@ impl Daemon {
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_path_buf();
+        // Keep the data dir private to the owning user: the event log records raw
+        // commands verbatim (spine #3), which can include secrets passed on a
+        // command line. We never scrub the verbatim record, so we protect it at
+        // rest (0700 dir, 0600 db) instead of leaving it world-readable.
+        #[cfg(unix)]
+        ipc::set_mode(&data_dir, 0o700);
         let snapshot_dir = data_dir.join("snapshots");
         let kill_path = data_dir.join(KILL_SWITCH_FILE);
         let log = EventLog::open(&db_path)
             .with_context(|| format!("open event log at {}", db_path.display()))?;
+        // Owner-only on the db (and its WAL/SHM siblings) — it holds verbatim
+        // commands that may contain secrets.
+        #[cfg(unix)]
+        for suffix in ["", "-wal", "-shm"] {
+            let p = if suffix.is_empty() {
+                db_path.clone()
+            } else {
+                PathBuf::from(format!("{}{suffix}", db_path.display()))
+            };
+            if p.exists() {
+                ipc::set_mode(&p, 0o600);
+            }
+        }
         Ok(Self {
             log,
             mode: Mode::default(),

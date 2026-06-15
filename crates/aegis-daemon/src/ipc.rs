@@ -94,10 +94,17 @@ pub fn socket_path() -> PathBuf {
     }
     #[cfg(unix)]
     {
+        // $XDG_RUNTIME_DIR is already a per-user 0700 dir — the right home.
         if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
             if !rt.is_empty() {
                 return PathBuf::from(rt).join("aegis.sock");
             }
+        }
+        // Otherwise use the per-user data dir (created 0700 at bind), never the
+        // world-writable temp dir, so another local user can't pre-create or
+        // connect to the socket.
+        if let Some(dirs) = directories::ProjectDirs::from("", "", "aegis") {
+            return dirs.data_dir().join("aegis.sock");
         }
         std::env::temp_dir().join("aegis.sock")
     }
@@ -105,6 +112,14 @@ pub fn socket_path() -> PathBuf {
     {
         PathBuf::from(r"\\.\pipe\aegis")
     }
+}
+
+/// Best-effort chmod on Unix (no-op elsewhere). Used to keep the socket and its
+/// parent dir private to the owning user.
+#[cfg(unix)]
+pub(crate) fn set_mode(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
 }
 
 /// Build the `interprocess` name for the current platform.
@@ -246,6 +261,12 @@ impl Server {
         #[cfg(unix)]
         {
             let path = socket_path();
+            // Ensure a private parent dir (0700) so peers can't pre-create the
+            // socket, then clear any stale socket file.
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+                set_mode(parent, 0o700);
+            }
             if path.exists() {
                 let _ = std::fs::remove_file(&path);
             }
@@ -255,6 +276,10 @@ impl Server {
             .name(name)
             .create_sync()
             .context("bind aegis daemon socket")?;
+        // Restrict the socket to the owning user (no group/other access), so on a
+        // shared host another user can't connect and Approve/Deny/Resolve.
+        #[cfg(unix)]
+        set_mode(&socket_path(), 0o600);
         Ok(Self { listener })
     }
 
