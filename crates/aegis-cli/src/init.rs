@@ -157,31 +157,39 @@ pub fn merge_settings_hook(
     }
     let evt = evt.as_array_mut().unwrap();
 
-    // Already wired? Look for any hook command mentioning our binary, so a
-    // re-run (or a CLI upgrade) never appends a duplicate entry.
-    let already = evt.iter().any(|entry| {
-        entry
-            .get("hooks")
-            .and_then(Value::as_array)
-            .map(|hs| {
-                hs.iter().any(|h| {
-                    h.get("command")
-                        .and_then(Value::as_str)
-                        .map(|c| c.contains(hook_command))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    });
-
-    if !already {
-        evt.push(json!({
-            "matcher": matcher,
-            "hooks": [ { "type": "command", "command": hook_command } ]
-        }));
-    }
+    // Drop EVERY existing Aegis entry, then add exactly one fresh entry. We match
+    // on the binary name (`aegis-hook`), not the full command string, so a re-run
+    // after the command format changed (a new path, or adding `--agent <id>`)
+    // collapses any stale/duplicate entries instead of appending another. Leaving
+    // two entries made Claude run the hook twice and double-logged every command.
+    evt.retain(|entry| !entry_mentions(entry, HOOK_BIN));
+    evt.push(json!({
+        "matcher": matcher,
+        "hooks": [ { "type": "command", "command": hook_command } ]
+    }));
 
     root
+}
+
+/// The binary basename every Aegis hook command contains — the stable marker we
+/// dedupe on, regardless of the absolute path or `--agent` flag around it.
+const HOOK_BIN: &str = "aegis-hook";
+
+/// True if a `settings.json` hook entry (`{matcher, hooks:[{command}]}`) has any
+/// inner hook command mentioning `needle`.
+fn entry_mentions(entry: &Value, needle: &str) -> bool {
+    entry
+        .get("hooks")
+        .and_then(Value::as_array)
+        .map(|hs| {
+            hs.iter().any(|h| {
+                h.get("command")
+                    .and_then(Value::as_str)
+                    .map(|c| c.contains(needle))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// Cursor CLI wiring: `~/.cursor/hooks.json` —
@@ -208,15 +216,16 @@ pub fn merge_cursor_hooks(existing: Option<Value>, hook_command: &str) -> Value 
     }
     let evt = evt.as_array_mut().unwrap();
 
-    let already = evt.iter().any(|e| {
-        e.get("command")
+    // Drop any prior Aegis entry (match on the binary name, not the exact
+    // command) so a format change can't leave two beforeShellExecution hooks,
+    // then add exactly one.
+    evt.retain(|e| {
+        !e.get("command")
             .and_then(Value::as_str)
-            .map(|c| c.contains(hook_command))
+            .map(|c| c.contains(HOOK_BIN))
             .unwrap_or(false)
     });
-    if !already {
-        evt.push(json!({ "command": hook_command }));
-    }
+    evt.push(json!({ "command": hook_command }));
     root
 }
 
@@ -250,8 +259,11 @@ pub fn copilot_hooks_config(hook_command: &str) -> Value {
 /// rules about ordering primitive keys before sub-tables. Array-of-tables blocks
 /// are valid at the end of a TOML file, after any top-level keys.
 pub fn merge_codex_toml(existing: &str, hook_command: &str) -> Result<String> {
-    // Idempotent: if our hook command is already registered, leave it alone.
-    if existing.contains(hook_command) {
+    // Idempotent: if ANY Aegis hook is already registered (match on the binary
+    // name, not the exact command), leave the file alone. Matching the full
+    // command instead would append a second block when the command format
+    // changed, which double-runs the hook and double-logs every command.
+    if existing.contains(HOOK_BIN) {
         return Ok(existing.to_string());
     }
     let escaped = hook_command.replace('\\', "\\\\").replace('"', "\\\"");
@@ -495,6 +507,68 @@ mod tests {
         );
         assert_eq!(once, twice);
         assert_eq!(twice["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn settings_hook_merge_collapses_stale_format_to_one() {
+        // Simulate the real bug: an old-format Aegis hook (bare command, no
+        // --agent and a different path) already in settings. A re-run with the
+        // new command must REPLACE it, not append — exactly one Aegis hook.
+        let stale = json!({
+            "hooks": { "PreToolUse": [
+                { "matcher": "Bash", "hooks": [
+                    { "type": "command", "command": "/old/path/aegis-hook" }
+                ]},
+                // an unrelated user hook that must survive
+                { "matcher": "Edit", "hooks": [
+                    { "type": "command", "command": "my-linter" }
+                ]}
+            ]}
+        });
+        let merged = merge_settings_hook(
+            Some(stale),
+            "PreToolUse",
+            "Bash",
+            "/new/path/aegis-hook --agent claude",
+        );
+        let pre = merged["hooks"]["PreToolUse"].as_array().unwrap();
+        // The user's Edit hook + exactly one Aegis hook = 2 entries.
+        assert_eq!(pre.len(), 2, "stale Aegis hook must be replaced, not added");
+        let aegis_entries = pre
+            .iter()
+            .filter(|e| entry_mentions(e, "aegis-hook"))
+            .count();
+        assert_eq!(aegis_entries, 1, "exactly one Aegis hook must remain");
+        // And it's the new command, not the stale one.
+        assert!(pre
+            .iter()
+            .any(|e| entry_mentions(e, "/new/path/aegis-hook --agent claude")));
+        assert!(pre.iter().any(|e| e["matcher"] == "Edit"));
+    }
+
+    #[test]
+    fn cursor_hooks_merge_collapses_stale_entry() {
+        let stale = json!({
+            "version": 1,
+            "hooks": { "beforeShellExecution": [
+                { "command": "/old/aegis-hook" }
+            ]}
+        });
+        let merged = merge_cursor_hooks(Some(stale), "/new/aegis-hook --agent cursor");
+        let evt = merged["hooks"]["beforeShellExecution"].as_array().unwrap();
+        assert_eq!(evt.len(), 1, "one Aegis cursor hook, not two");
+        assert_eq!(evt[0]["command"], "/new/aegis-hook --agent cursor");
+    }
+
+    #[test]
+    fn codex_toml_merge_does_not_duplicate_across_format_change() {
+        // An old-format Aegis hook with a different command must NOT trigger a
+        // second appended block.
+        let old = "model = \"gpt-5\"\n\n[[hooks.PreToolUse]]\nmatcher = \"^Bash$\"\n\n\
+                   [[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"/old/aegis-hook\"\n";
+        let merged = merge_codex_toml(old, "/new/aegis-hook --agent codex").unwrap();
+        assert_eq!(merged, old, "must not append a second Aegis block");
+        assert_eq!(merged.matches("aegis-hook").count(), 1);
     }
 
     #[test]

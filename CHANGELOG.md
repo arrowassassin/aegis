@@ -17,6 +17,14 @@ All notable changes to Aegis are documented here. The format loosely follows
   dialect; the daemon round-trip and fail-closed-catastrophic policy are shared.
   Each wire-up is idempotent and backs up any file it touches. See
   [`docs/hooks.md`](docs/hooks.md).
+- **Fix duplicate log rows.** `aegis init` deduped a hook by its *exact* command
+  string, so when the command changed (a new binary path, or adding `--agent
+  <id>`) a re-run appended a second entry instead of replacing the old one. Two
+  registered hooks made the CLI run Aegis twice per command and log every command
+  2–3×. Registration now matches on the `aegis-hook` binary name and collapses
+  any stale/duplicate entries to exactly one (settings.json, Cursor hooks.json,
+  Codex config.toml). Re-run `aegis init` once to clean an already-duplicated
+  config.
 
 ### CLI & install
 - **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
