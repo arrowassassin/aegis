@@ -498,6 +498,35 @@ fn init_wires_every_supported_cli_natively() {
     }
 }
 
+#[test]
+fn test_command_is_a_dry_run_classifier() {
+    // Catastrophic, shown without running or contacting a daemon.
+    let out = aegis()
+        .args(["test", "rm -rf /"])
+        .env("AEGIS_SOCKET", "/nonexistent/aegis.sock")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let t = String::from_utf8_lossy(&out.stdout);
+    assert!(t.contains("CATASTROPHIC"), "{t}");
+    assert!(t.contains("Dry run"), "{t}");
+
+    // Safe.
+    let safe = aegis().args(["test", "git status"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&safe.stdout).contains("SAFE"));
+
+    // The AST pass surfaces danger hidden in a command substitution.
+    let sub = aegis()
+        .args(["test", "echo \"$(git push --force)\""])
+        .output()
+        .unwrap();
+    let st = String::from_utf8_lossy(&sub.stdout);
+    assert!(
+        st.contains("CATASTROPHIC"),
+        "substitution should be caught:\n{st}"
+    );
+}
+
 /// Drives a live daemon through `aegis queue` and the `aegis run` branches, to
 /// cover the queue/run handlers (which only exercise meaningfully against a real
 /// daemon + queued items). Linux-only: it relies on `setsid` to run `aegis run`

@@ -278,6 +278,41 @@ the locked product decisions this build implements.
   PageUp/PageDown are aliases. Space/b are primary because Mac keyboards lack
   dedicated PageUp/PageDown. Footer gained a right-aligned "row N/M" indicator,
   shown only when it fits so the help text never clips on an 80-col terminal.
+- Shell analysis went AST-based (industry standard). We adopted a real bash AST
+  parser (`brush-parser`, pure-Rust/MIT) over the prior regex/substring approach,
+  which is the documented failure mode for shell scanners (quoting/expansion slip
+  through). Chose pure-Rust to keep the default build toolchain-free; rejected
+  `yash-syntax` (GPL-3.0, incompatible with a distributed MIT binary).
+- Keep BOTH parsers, worst-wins. The new AST pass composes with the old tokenizer
+  pass and takes the most-severe class. Defense-in-depth for the security spine:
+  the AST can only ADD caution, and if either pass (or the parser) fails, the
+  other still stands. Never downgrades a verdict.
+- AST fast-path is an allowlist, not a denylist. After the roundtable found a bare
+  `&` slipping past a denylist of "interesting" characters, the skip-the-AST gate
+  became an allowlist of provably-inert lines (plain word/flag/path chars only).
+  A denylist is one missing operator away from a catastrophic-as-Safe miss.
+- Parser DoS is prevented, not caught. brush-parser stack-overflows (uncatchable
+  abort, not a panic) on deeply nested `$(…)`. We refuse input past a generous
+  nesting/size/operator cap *before* parsing and classify it Ambiguous (never
+  Safe); the AST-walk depth guard likewise sets a `truncated` flag that fails
+  toward caution rather than dropping a buried command.
+- False-positive suppression is program-aware and one-sided (human-signed-off, as
+  it relaxes a guardrail). The whole-line SQL / curl-pipe / fork-bomb text scans
+  are suppressed only when *every* program the line runs is a known inert text
+  handler (grep/rg/echo/printf/cat/git/diff/…); any unknown or executing program
+  keeps the catastrophic verdict. So `grep 'DROP TABLE'` / `git commit -m '…'` /
+  `echo 'curl … | sh'` no longer hard-block, while `psql -c 'DROP TABLE'` and
+  `curl … | sh` still do. Block-device writes are NOT subject to this (an inert
+  program can still clobber a device via `>`), so they're detected structurally:
+  a redirect *target* that is a block device, or `dd of=…` — which also fixes the
+  `cat of=/dev/sda.txt` / commit-message false positives without allowlisting.
+- Secret handling went deny-by-default. A command pointed at a secret path is
+  never auto-`Safe`; the content-reader set is broadened (sort/diff/wc/tar/base64/…
+  → `secret:read`), a truncating redirect onto a secret is `secret:clobber`, and
+  `git config` that *sets* an execution primitive (core.pager / core.sshCommand /
+  alias.* / *.command …) is `git:config-exec`. Reads of those keys stay safe.
+- Decoder-to-shell joins download-to-shell: `… | base64 -d | sh` (and base32 /
+  xxd / uudecode / openssl) is `net:pipe-to-shell`, not just `curl|sh`.
 - aegis run / approval flow (6-reviewer roundtable: 2 principal sys-design, 2
   junior daily users, 1 PM, 1 infosec). A catastrophic command via a native hook
   is one-shot deny (an in-agent allow would skip the snapshot), so the human path

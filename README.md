@@ -45,6 +45,43 @@ frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
 Runs on macOS, Linux, and Windows. Install is one command; it works immediately
 with no model and no setup beyond `aegis init`.
 
+## How Aegis decides what's dangerous
+
+The block decision is **deterministic and LLM-free** — fixed rules a human wrote,
+never a model guessing (the model only ever *explains* and can only *add*
+caution). What makes it trustworthy is *how* it reads a command:
+
+- **It parses real shell structure, not text.** Aegis runs two passes and takes
+  the **more cautious** verdict: a fast tokenizer, and a true **bash AST** parser
+  ([`brush-parser`](https://crates.io/crates/brush-parser), pure-Rust). The AST
+  pass sees what substring matching can't — commands hidden inside command
+  substitution `$(…)`/backticks, here-documents fed to a shell, subshells, and
+  `if`/`for`/`while` blocks. So `echo "$(rm -rf /)"` and `bash <<<'rm -rf /'` are
+  caught, not waved through. This is the industry-standard approach: real
+  AST analysis is what static analyzers (ShellCheck) and shell tooling use, and
+  it avoids the documented failure mode of regex/substring scanners.
+- **It fails toward caution.** A line the parser can't fully understand is **held**
+  (AMBIGUOUS), never assumed safe. A parse failure can only *add* caution — it
+  can never downgrade a catastrophic verdict. The hard rule, enforced by a golden
+  test corpus, is **zero catastrophic-classified-as-safe**.
+- **Catastrophic categories** map to the kinds of damage that matter — data
+  destruction (`rm -rf`, `DROP TABLE`, `git push --force`, `terraform destroy`),
+  disk/device writes (`dd`, `mkfs`), and secret reads (`.env`, `~/.ssh/…`) — in
+  the spirit of the MITRE ATT&CK taxonomy and GTFOBins "this benign binary can do
+  harm" catalog.
+
+**Try it yourself — it runs nothing:**
+
+```sh
+aegis test "cd build && rm -rf ../dist"      # ⛔ CATASTROPHIC (rule: rm:recursive)
+aegis test "git status"                      # ✓ SAFE
+aegis test 'echo "$(git push --force)"'      # ⛔ — caught inside the substitution
+```
+
+`aegis test` shows the class, the rule that fired, what would happen, and the
+exact commands Aegis sees inside your line — without executing, logging, or
+contacting anything.
+
 ## Status
 
 All build phases are implemented (see

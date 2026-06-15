@@ -12,6 +12,7 @@
 
 pub mod log;
 pub mod memory;
+pub mod parse;
 pub mod policy;
 pub mod rules;
 pub mod shell;

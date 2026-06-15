@@ -102,6 +102,12 @@ enum Command {
     },
     /// Open the live timeline TUI.
     Tui,
+    /// Dry-run: show how Aegis would classify a command, without running it.
+    /// Try it: `aegis test "cd build && rm -rf ../dist"`.
+    Test {
+        /// The command line to classify (quote it).
+        command: String,
+    },
     /// List commands held for approval.
     Queue,
     /// Approve a held command by id (or unique id prefix).
@@ -265,6 +271,7 @@ fn main() -> Result<()> {
         Some(Command::Undo { session }) => cmd_undo(session),
         Some(Command::Watch { paths }) => aegis_daemon::watch::run(&paths),
         Some(Command::Tui) => aegis_tui::run(&default_db_path(), &snapshot_dir()),
+        Some(Command::Test { command }) => cmd_test(&command),
         Some(Command::Queue) => cmd_queue(),
         Some(Command::Approve { id }) => cmd_resolve_pending(&id, true),
         Some(Command::Deny { id }) => cmd_resolve_pending(&id, false),
@@ -272,6 +279,63 @@ fn main() -> Result<()> {
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
     }
+}
+
+/// Dry-run classifier: show how Aegis would classify a command and what would
+/// happen, plus the simple commands the AST sees inside it — without running,
+/// logging, or contacting the daemon. A safe way to explore the rules.
+fn cmd_test(raw: &str) -> Result<()> {
+    use aegis_core::rules;
+    let m = rules::classify_line(raw);
+    let decision = rules::decide(m.class, aegis_core::Mode::Attended);
+
+    let label = match m.class {
+        aegis_core::Class::Catastrophic => "⛔ CATASTROPHIC",
+        aegis_core::Class::Ambiguous => "● AMBIGUOUS",
+        aegis_core::Class::Safe => "✓ SAFE",
+    };
+    let outcome = match (m.class, decision) {
+        (_, aegis_core::Decision::Allow) => "allowed — runs normally; recorded on the timeline.",
+        (aegis_core::Class::Catastrophic, _) => {
+            "blocked — the agent won't run it; you'd run it yourself, reversibly."
+        }
+        (_, aegis_core::Decision::Hold) => "held — paused for your one-key approval.",
+        (_, aegis_core::Decision::Deny) => "denied.",
+    };
+
+    println!("command:   {raw}");
+    println!("class:     {label}   (rule: {})", m.rule);
+    println!("with you:  {outcome}");
+
+    // Show what the parser actually sees — including commands hidden inside
+    // $(…), here-docs, or compound commands. This is the AST pass in action.
+    if let Some(analysis) = aegis_core::parse::analyze(raw) {
+        if analysis.commands.len() > 1
+            || analysis
+                .commands
+                .first()
+                .map(|c| !c.args.is_empty())
+                .unwrap_or(false)
+        {
+            println!();
+            println!("Aegis sees these commands:");
+            for c in &analysis.commands {
+                let args = c.args.join(" ");
+                if args.is_empty() {
+                    println!("  • {}", c.program);
+                } else {
+                    println!("  • {} {}", c.program, args);
+                }
+            }
+        }
+    } else {
+        println!();
+        println!("(couldn't fully parse this line — Aegis stays cautious and would hold it.)");
+    }
+
+    println!();
+    println!("Dry run: nothing was executed, logged, or sent anywhere.");
+    Ok(())
 }
 
 fn cmd_queue() -> Result<()> {
