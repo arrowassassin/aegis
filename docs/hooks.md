@@ -53,13 +53,17 @@ reversibility guarantee. Catastrophic commands must go through a guarded path
 
 A hook is **one-shot**: by the time you see the deny, the agent already has it
 and has moved on. Unlike the MCP and `$PATH` shim paths — where the original
-call waits in-band and *does* run the command when you approve it from
-`aegis tui` / `aegis approve <id>` — there is no waiting process behind a hook,
-so approving a hook-originated catastrophic in the queue would record the
-decision but **not execute it**. The deny reason is therefore honest about it:
-the agent won't run the command, and if you want it, run it yourself through the
-Aegis shim (which snapshots first, so `aegis undo` can roll it back). See
-[`docs/queue.md`](queue.md) for which interception paths run-on-approve.
+call waits in-band and *does* run the command when you `aegis approve` it — there
+is no waiting process behind a hook, so approving a hook-originated catastrophic
+would only record the decision, not execute it.
+
+So the way to run a hook-blocked command yourself is **`aegis run <id>`** (the
+deny reason names it). It snapshots the predicted paths, runs the exact command
+in its original directory, records it, and is undoable with `aegis undo`. It
+confirms with a code typed at your real terminal (`/dev/tty`), so an agent that
+shells out to `aegis run` can't self-approve. See [`docs/queue.md`](queue.md) for
+the full approve-vs-run model, exactly-once resolution, and the honest limits of
+snapshot-based reversibility.
 
 ## Fail behavior
 
