@@ -5,6 +5,17 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Model
+- **Bring-your-own model (`AEGIS_MODEL_FILE`)**: point the daemon at any local
+  GGUF and it loads that one — no recompile, no pinned spec. The durable answer
+  to "models keep releasing"; the pinned default is now just a sensible default.
+- **Interactive model picker** (`scripts/pick-model.sh`, served at
+  `…/pick-model.sh`): fetches a short, RAM-appropriate list of small instruct
+  GGUF models from the Hugging Face API (query constrained to `filter=gguf`,
+  text-generation, sized to detected RAM), downloads your choice, prints its
+  SHA-256, and tells you the one env var to set. `install.sh --with-model` runs
+  it after install. Aegis still ships model-free (heuristic scorer) by default.
+
 ### Security & hardening
 - Review hardening (panel: 2 principal eng, 4 testers, 2 dev-users):
   - **Catastrophic hard floor** is now consistent: neither decision memory nor

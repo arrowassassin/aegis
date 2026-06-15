@@ -11,6 +11,7 @@
 #   --from-source       build with cargo instead of downloading
 #   --bin-dir <DIR>     install location (default: $HOME/.local/bin)
 #   --version <TAG>     install a specific release tag (default: latest)
+#   --with-model        after install, run the model picker (optional GGUF)
 set -eu
 
 REPO="arrowassassin/aegis"
@@ -18,6 +19,8 @@ BINS="aegis aegis-daemon aegis-shim aegis-hook aegis-mcp"
 BIN_DIR="${AEGIS_BIN_DIR:-$HOME/.local/bin}"
 VERSION=""
 FROM_SOURCE=0
+WITH_MODEL=0
+PICKER_URL="https://arrowassassin.github.io/aegis/pick-model.sh"
 
 say()  { printf '\033[1;32maegis\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33maegis\033[0m %s\n' "$*" >&2; }
@@ -27,9 +30,10 @@ have() { command -v "$1" >/dev/null 2>&1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --from-source) FROM_SOURCE=1 ;;
+    --with-model) WITH_MODEL=1 ;;
     --bin-dir) BIN_DIR="${2:?--bin-dir needs a path}"; shift ;;
     --version) VERSION="${2:?--version needs a tag}"; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -79,6 +83,20 @@ post_install_notes() {
   esac
   echo "  aegis init      # detect agents, wire interception, start the daemon"
   echo "  aegis status    # confirm it's running"
+  echo
+  echo "  optional — explain/score with a local model (Aegis works without one):"
+  echo "    curl -fsSL $PICKER_URL | sh"
+  maybe_pick_model
+}
+
+# Run the model picker now if --with-model was passed.
+maybe_pick_model() {
+  [ "$WITH_MODEL" -eq 1 ] || return 0
+  echo
+  say "running the model picker (--with-model)…"
+  if have curl; then curl -fsSL "$PICKER_URL" | sh
+  elif have wget; then wget -qO- "$PICKER_URL" | sh
+  else warn "need curl or wget for --with-model; skipping."; fi
 }
 
 main() {

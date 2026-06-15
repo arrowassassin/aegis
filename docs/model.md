@@ -30,10 +30,50 @@ can't load, Aegis keeps working with rules + heuristic scoring.
 | primary  | **Qwen3-4B-Instruct**   | ~2.5 GB | RAM ≥ ~6 GB |
 | low-RAM  | **Qwen3-1.7B-Instruct** | ~1.1 GB | otherwise (auto-selected) |
 
-Qwen3 is a current, strong small-instruct family — better quality-per-byte than
-the older 3B/1.5B it replaces, at the same footprint. The task (a one-line
-summary + a 0–100 risk score as forced-short JSON) is light, so a small model is
-the right call.
+Our Tier-2 job is tiny — emit forced-short JSON (`{summary, risk}`) — so it
+favours a *small, permissive, instruction-tuned* model with reliable structured
+output over raw size. We surveyed the current small-model field (Qwen3.x,
+Llama 3.2, Gemma, Phi-4-mini) and default to the Qwen3 instruct family:
+Apache-2.0 (no usage restrictions for a tool we ship to others), first-party
+GGUF builds at the sizes we want, and best-in-class small-model
+instruction-following. The 1.7B fallback is same-family so RAM-based selection
+behaves identically at the low end.
+
+### Future-proof: bring your own model (`AEGIS_MODEL_FILE`)
+
+Models move fast, so the durable answer isn't the pinned constant. Point Aegis at
+**any** local GGUF and it loads that one — no recompile, no pinned spec:
+
+```sh
+export AEGIS_MODEL_FILE="/path/to/your-model.gguf"
+```
+
+This is a deliberate bring-your-own-weights trust path (you chose the file), so
+it bypasses the checksum pin — which only guards the daemon's own `download`
+fetch. `AEGIS_MODEL_DIR` still overrides where pinned weights are cached.
+
+### Pick a model interactively
+
+Don't have a GGUF yet? The picker fetches a short, RAM-appropriate list of small
+instruct GGUF models from the Hugging Face API, downloads your choice, prints its
+SHA-256, and tells you the one env var to set:
+
+```sh
+curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh
+# or during install:
+curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh -s -- --with-model
+```
+
+It constrains the query (`filter=gguf`, `pipeline_tag=text-generation`, sized to
+your RAM) so only viable options come back, and picks the single-file Q4_K_M
+build in the repo. Like `AEGIS_MODEL_FILE`, a picked model is your choice and is
+not checksum-pinned; the printed SHA-256 lets you record/pin it yourself.
+
+> Research sources (2026-06): Qwen3/Qwen3.x model cards and GGUF repos on
+> huggingface.co (`Qwen/Qwen3-4B-Instruct`, `Qwen/Qwen3-1.7B-Instruct`),
+> qwen.readthedocs.io, and the Hugging Face models API
+> (`huggingface.co/api/models`). Re-run the picker any time the field moves —
+> the mechanism stays correct even as specific models age out.
 
 ## Running with the real model
 

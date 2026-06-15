@@ -83,6 +83,16 @@ aegis status      # daemon / socket / log / kill-switch health
 aegis tui         # live, interactive timeline (j/k, enter, a/d, u, /, q)
 ```
 
+Aegis runs with **no model** (the offline heuristic scorer is always on). To also
+get a plain-English summary + risk score, pick a small local GGUF — the picker
+lists RAM-appropriate options from the Hugging Face API and prints the one env var
+to set (or fold it into install with `| sh -s -- --with-model`):
+
+```sh
+curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh
+# already have a GGUF? skip the picker:  export AEGIS_MODEL_FILE=/path/to/model.gguf
+```
+
 Other commands: `aegis log`, `aegis undo [--session]`, `aegis queue` /
 `approve <id>` / `deny <id>`, `aegis watch <path>`, `aegis panic` / `resume`.
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch

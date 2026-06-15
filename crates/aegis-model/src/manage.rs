@@ -34,9 +34,26 @@ impl ModelSpec {
     }
 }
 
-/// Primary model: Qwen3-4B-Instruct, Q4_K_M (~2.5 GB). A current, strong small
-/// instruct model — better quality-per-byte than the older 3B it replaces, while
-/// staying in the same footprint. URL/sha must be pinned before enabling `download`.
+// Default model choice — researched to be future-proof (2026-06).
+//
+// Our Tier-2 task is deliberately tiny: emit forced-short JSON with a one-line
+// summary and a 0..=100 risk score. That favours a *small, permissive,
+// instruction-tuned* model with reliable structured output over raw size. We
+// surveyed the current small-model field (Qwen3.x, Llama 3.2, Gemma, Phi-4-mini)
+// and pin the Qwen3 instruct family as the default:
+//   - Apache-2.0 — no usage restrictions for a tool we ship to others.
+//   - Official first-party GGUF builds (Q4_K_M) at the sizes we want.
+//   - Best small-model instruction-following / forced-JSON in its class.
+//   - A 4B-dense primary and a 1.7B fallback so RAM-based selection has a
+//     same-family low-end that behaves identically.
+//
+// Models move fast, so the durable answer is *not* this constant: set
+// `AEGIS_MODEL_FILE=/path/to/any.gguf` to run a newer/local GGUF without
+// recompiling (see `llama::LlamaScorer::autoload`). This spec is only the
+// pinned, checksum-verified default for the `download` path; url/sha must be
+// filled before enabling that feature.
+
+/// Primary model: Qwen3-4B-Instruct, Q4_K_M (~2.5 GB), used when RAM ≥ ~6 GB.
 pub const MODEL_PRIMARY: ModelSpec = ModelSpec {
     id: "qwen3-4b-instruct-q4_k_m",
     file: "qwen3-4b-instruct-q4_k_m.gguf",

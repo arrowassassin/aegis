@@ -151,3 +151,14 @@ the locked product decisions this build implements.
   GitHub Pages (site/install.sh) so the one-liner is the short
   arrowassassin.github.io/aegis/install.sh instead of the raw.githubusercontent
   path. Homebrew de-emphasized in README/site per request.
+- Future-proof model selection: added AEGIS_MODEL_FILE runtime override (load any
+  local GGUF, bypassing the pinned spec/checksum — a user-chosen, bring-your-own
+  trust path; the daemon's own download path stays pinned-only). The pinned const
+  is now documented as just a sensible default. Added scripts/pick-model.sh
+  (served from Pages) that queries the Hugging Face API with constrained params
+  (filter=gguf, pipeline_tag=text-generation, RAM-sized search, top by downloads),
+  lists only viable small instruct GGUF options, downloads the single-file Q4_K_M
+  build, and prints its SHA-256 for the user to record/pin. install.sh gained
+  --with-model. Rationale (researched 2026-06): the field moves fast, so the
+  mechanism (override + picker) is the future-proof choice; Qwen3 stays the
+  Apache-2.0 default. Installer itself still never auto-downloads a model.

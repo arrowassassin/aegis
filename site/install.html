@@ -69,6 +69,24 @@
     </ul>
   </section>
 
+  <section id="model">
+    <h2><span class="n">&gt;</span> 1b · optional — pick a local model</h2>
+    <p class="lead">Aegis works with <strong>no model</strong> (the offline heuristic
+      scorer is always on). To also get a plain-English summary + risk score, the
+      picker fetches a short, RAM-appropriate list of small instruct GGUF models,
+      downloads your choice, and prints the one env var to set:</p>
+    <div class="cmd">
+      <button class="copy">copy</button>
+<pre>curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh</pre>
+    </div>
+    <p class="muted">Or fold it into the install above with
+      <span class="t-grn">| sh -s -- --with-model</span>. The query is constrained
+      (<span class="muted">filter=gguf</span>, text-generation, sized to your RAM)
+      so only viable options appear. Already have a GGUF? Skip the picker and set
+      <span class="t-grn">AEGIS_MODEL_FILE=/path/to/model.gguf</span> — any local
+      model, no recompile.</p>
+  </section>
+
   <section id="plugin">
     <h2><span class="n">&gt;</span> 2 · claude code plugin</h2>
     <p class="lead">Aegis ships as a Claude Code plugin + marketplace. The plugin is a

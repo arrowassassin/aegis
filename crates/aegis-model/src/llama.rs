@@ -40,8 +40,28 @@ pub struct LlamaScorer {
 }
 
 impl LlamaScorer {
-    /// Resolve weights (RAM-selected), then load the model.
+    /// Resolve weights, then load the model.
+    ///
+    /// Future-proof override: if `AEGIS_MODEL_FILE` points at a readable `.gguf`,
+    /// load it directly — any newer/local model, no recompile and no pinned spec.
+    /// This is the same bring-your-own-weights trust model as the picker script;
+    /// it deliberately bypasses the checksum pin (the user chose the file). The
+    /// daemon's `download` path stays pinned-only.
     pub fn autoload() -> Result<Self> {
+        if let Some(p) = std::env::var_os("AEGIS_MODEL_FILE") {
+            let path = std::path::PathBuf::from(p);
+            if path.is_file() {
+                let id = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("custom");
+                return Self::load(&path, id);
+            }
+            anyhow::bail!(
+                "AEGIS_MODEL_FILE is set but not a readable file: {}",
+                path.display()
+            );
+        }
         let dir = weights_dir();
         let spec = manage::select_spec(manage::detect_ram_mb());
         let path = manage::ensure_weights(spec, &dir)
