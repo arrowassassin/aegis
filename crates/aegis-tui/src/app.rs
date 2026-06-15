@@ -18,6 +18,106 @@ pub fn outcome_word(d: aegis_core::Decision) -> &'static str {
     }
 }
 
+/// A parsed filter query. Bare words are a substring match over the row's text;
+/// `agent:`, `session:`, `since:`, and `before:` are structured predicates.
+/// `since:`/`before:` take a relative age (`30m`, `2h`, `3d`, `day`, `week`,
+/// `month`): `since:1h` = within the last hour, `before:1d` = older than a day.
+#[derive(Default)]
+struct Query {
+    agent: Option<String>,
+    session: Option<String>,
+    since: Option<time::OffsetDateTime>,
+    before: Option<time::OffsetDateTime>,
+    text: String,
+}
+
+impl Query {
+    fn parse(input: &str) -> Self {
+        let mut q = Query::default();
+        let mut text = Vec::new();
+        for tok in input.split_whitespace() {
+            if let Some(v) = tok.strip_prefix("agent:") {
+                q.agent = Some(v.to_lowercase());
+            } else if let Some(v) = tok.strip_prefix("session:") {
+                q.session = Some(v.to_lowercase());
+            } else if let Some(v) = tok.strip_prefix("since:") {
+                q.since = parse_ago(v);
+            } else if let Some(v) = tok.strip_prefix("before:") {
+                q.before = parse_ago(v);
+            } else {
+                text.push(tok.to_lowercase());
+            }
+        }
+        q.text = text.join(" ");
+        q
+    }
+
+    fn matches(&self, e: &LoggedEvent) -> bool {
+        if let Some(a) = &self.agent {
+            if !e.agent.to_lowercase().contains(a) {
+                return false;
+            }
+        }
+        if let Some(s) = &self.session {
+            if !e
+                .session
+                .as_deref()
+                .is_some_and(|es| es.to_lowercase().contains(s))
+            {
+                return false;
+            }
+        }
+        if let Some(since) = self.since {
+            if e.ts < since {
+                return false;
+            }
+        }
+        if let Some(before) = self.before {
+            if e.ts >= before {
+                return false;
+            }
+        }
+        if !self.text.is_empty() {
+            let n = &self.text;
+            let hit = e.command.to_lowercase().contains(n)
+                || e.agent.to_lowercase().contains(n)
+                || e.class.as_str().contains(n)
+                || e.decision.as_str().contains(n)
+                || outcome_word(e.decision).contains(n)
+                || e.reason.to_lowercase().contains(n)
+                || e.session
+                    .as_deref()
+                    .is_some_and(|s| s.to_lowercase().contains(n));
+            if !hit {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Parse a relative age spec into an absolute instant that long ago.
+fn parse_ago(s: &str) -> Option<time::OffsetDateTime> {
+    use time::{Duration, OffsetDateTime};
+    let d = match s {
+        "day" => Duration::days(1),
+        "week" => Duration::weeks(1),
+        "month" => Duration::days(30),
+        _ => {
+            let split = s.find(|c: char| c.is_alphabetic())?;
+            let n: i64 = s[..split].parse().ok()?;
+            match &s[split..] {
+                "m" => Duration::minutes(n),
+                "h" => Duration::hours(n),
+                "d" => Duration::days(n),
+                "w" => Duration::weeks(n),
+                _ => return None,
+            }
+        }
+    };
+    Some(OffsetDateTime::now_utc() - d)
+}
+
 /// Which view/mode the UI is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -77,25 +177,11 @@ impl App {
 
     /// Indices into `events` that match the current filter.
     pub fn filtered_indices(&self) -> Vec<usize> {
-        if self.filter.is_empty() {
-            return (0..self.events.len()).collect();
-        }
-        let needle = self.filter.to_lowercase();
+        let q = Query::parse(&self.filter);
         self.events
             .iter()
             .enumerate()
-            .filter(|(_, e)| {
-                e.command.to_lowercase().contains(&needle)
-                    || e.agent.to_lowercase().contains(&needle)
-                    || e.class.as_str().contains(&needle)
-                    || e.decision.as_str().contains(&needle)
-                    || outcome_word(e.decision).contains(&needle) // the displayed word
-                    || e.reason.to_lowercase().contains(&needle)
-                    || e
-                        .session
-                        .as_deref()
-                        .is_some_and(|s| s.to_lowercase().contains(&needle))
-            })
+            .filter(|(_, e)| q.matches(e))
             .map(|(i, _)| i)
             .collect()
     }
@@ -245,6 +331,59 @@ mod tests {
             ev("qwen", "make build", Class::Ambiguous, Decision::Hold),
         ]);
         app
+    }
+
+    fn ev_session(agent: &str, session: &str, raw: &str) -> LoggedEvent {
+        let log = EventLog::open_in_memory().unwrap();
+        let cmd = ProposedCommand::new(agent, "/tmp", vec![raw.into()], raw)
+            .with_session(Some(session.into()));
+        log.log_event(
+            &cmd,
+            &Verdict::rules(Class::Safe, Decision::Allow, "r"),
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn structured_filter_tokens() {
+        let mut app = App::new(false);
+        app.set_events(vec![
+            ev_session("claude-code", "s1", "ls"),
+            ev_session("claude-code", "s2", "make build"),
+            ev_session("cursor", "s2", "npm test"),
+        ]);
+
+        app.filter = "agent:claude-code".into();
+        assert_eq!(app.visible().len(), 2);
+
+        app.filter = "session:s2".into();
+        assert_eq!(app.visible().len(), 2);
+
+        app.filter = "agent:cursor session:s2".into();
+        assert_eq!(app.visible().len(), 1);
+
+        // Structured token + free text combine (AND).
+        app.filter = "agent:claude-code build".into();
+        assert_eq!(app.visible().len(), 1);
+
+        // Recent window includes everything just logged.
+        app.filter = "since:1h".into();
+        assert_eq!(app.visible().len(), 3);
+
+        // Empty filter shows all.
+        app.filter = String::new();
+        assert_eq!(app.visible().len(), 3);
+    }
+
+    #[test]
+    fn parse_ago_accepts_known_forms() {
+        assert!(parse_ago("10m").is_some());
+        assert!(parse_ago("2h").is_some());
+        assert!(parse_ago("3d").is_some());
+        assert!(parse_ago("week").is_some());
+        assert!(parse_ago("nonsense").is_none());
+        assert!(parse_ago("5x").is_none());
     }
 
     #[test]

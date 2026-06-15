@@ -346,7 +346,9 @@ impl EventLog {
     /// List the still-pending queued commands, oldest first.
     pub fn list_pending(&self) -> Result<Vec<PendingItem>, LogError> {
         let mut stmt = self.conn.prepare(
-            "SELECT command, class, reason, ts FROM pending WHERE status = 'pending' ORDER BY ts ASC",
+            // rowid tiebreaks ts so insertion order is deterministic even when two
+            // commands enqueue within the same timestamp tick (seen on Windows).
+            "SELECT command, class, reason, ts FROM pending WHERE status = 'pending' ORDER BY ts ASC, rowid ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((

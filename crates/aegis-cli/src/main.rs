@@ -37,6 +37,8 @@ enum Command {
     },
     /// Show daemon, socket, log, and interception status.
     Status,
+    /// Stop the background daemon (the inverse of `aegis init`).
+    Stop,
     /// Show the recent command timeline from the event log.
     Log {
         /// How many recent events to show.
@@ -193,12 +195,7 @@ fn parse_instant(s: &str) -> Result<time::OffsetDateTime> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        None => {
-            println!("aegis {}", env!("CARGO_PKG_VERSION"));
-            println!("A local-first safety layer for AI coding agents.");
-            println!("Run `aegis --help` for usage, or `aegis init` to get started.");
-            Ok(())
-        }
+        None => cmd_banner(),
         Some(Command::Init {
             no_daemon,
             print_path,
@@ -211,6 +208,7 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Status) => cmd_status(),
+        Some(Command::Stop) => cmd_stop(),
         Some(Command::Log {
             number,
             show_redacted,
@@ -491,6 +489,63 @@ fn wire_claude_hook(home: Option<&std::path::Path>) -> Result<()> {
     Ok(())
 }
 
+/// Bare `aegis`: a short banner that tells you the current state and the next step.
+fn cmd_banner() -> Result<()> {
+    println!("aegis {}", env!("CARGO_PKG_VERSION"));
+    println!("A local-first safety layer for AI coding agents.");
+    println!();
+    if aegis_daemon::kill_switch_path().exists() {
+        println!("  ⚠ KILL-SWITCH ENGAGED — all agent actions are denied.");
+        println!("    run `aegis resume` to clear it.");
+    } else if Client::is_daemon_running() {
+        println!("  ✓ running and guarding your machine.");
+        println!("    `aegis tui` (live timeline) · `aegis status` · `aegis stop`");
+    } else {
+        println!("  • not running yet.");
+        println!("    run `aegis init` to detect your agents and start the daemon.");
+    }
+    println!();
+    println!("Run `aegis --help` for all commands.");
+    Ok(())
+}
+
+fn cmd_stop() -> Result<()> {
+    let running = Client::is_daemon_running();
+    let pid_path = aegis_daemon::pid_file_path();
+    let pid = std::fs::read_to_string(&pid_path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    match pid {
+        Some(pid) => {
+            kill_pid(&pid);
+            let _ = std::fs::remove_file(&pid_path);
+            println!("aegis: stopped the daemon (pid {pid}).");
+        }
+        None if running => {
+            println!(
+                "aegis: the daemon is running but its PID file is missing.\n  \
+                 Stop it manually (e.g. `pkill aegis-daemon`)."
+            );
+        }
+        None => println!("aegis: the daemon is not running."),
+    }
+    Ok(())
+}
+
+/// Best-effort terminate a PID across platforms.
+#[cfg(unix)]
+fn kill_pid(pid: &str) {
+    let _ = std::process::Command::new("kill").arg(pid).status();
+}
+#[cfg(not(unix))]
+fn kill_pid(pid: &str) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", pid, "/F"])
+        .status();
+}
+
 fn start_daemon() -> Result<()> {
     let daemon_bin = init::sibling_bin("aegis-daemon");
     std::process::Command::new(&daemon_bin)
@@ -499,8 +554,9 @@ fn start_daemon() -> Result<()> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .with_context(|| format!("start daemon {}", daemon_bin.display()))?;
-    // Give it a moment to bind the socket.
-    for _ in 0..50 {
+    // The daemon writes its own PID file (used by `aegis stop`) once it binds.
+    // Wait (generously, for loaded CI) for it to bind before returning.
+    for _ in 0..150 {
         if Client::is_daemon_running() {
             return Ok(());
         }

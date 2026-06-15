@@ -35,35 +35,22 @@
 
   <section class="hero" style="border-top:none">
     <h1>AEGIS</h1>
-    <p class="sub">A local-first safety layer for AI coding agents. It catches the
-      dangerous command <b>before</b> it runs.</p>
+    <p class="sub">Let AI coding agents move fast — <b>without letting them wreck
+      your machine.</b> Aegis catches the dangerous command <b>before</b> it runs,
+      makes it reversible, and logs everything. Local-first.</p>
     <div class="cta">
       <a class="btn" href="install.html">GET STARTED</a>
       <a class="btn alt" href="features.html">SEE FEATURES</a>
+      <a class="btn alt" href="https://github.com/arrowassassin/aegis">★ STAR ON GITHUB</a>
     </div>
-    <p class="note">Rust &middot; agent-agnostic &middot; nothing leaves your machine</p>
+    <p class="note">macOS · Linux · Windows &middot; works with every agent &middot; nothing leaves your machine</p>
+    <p class="note">★ if Aegis is useful to you, <a href="https://github.com/arrowassassin/aegis">leave a star</a> — it helps others find it.</p>
 
     <figure style="margin:26px auto 0; max-width:900px">
-      <img src="cast.svg" alt="Aegis cast: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
+      <img src="cast.svg" alt="Aegis: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
-      <figcaption class="note" style="margin-top:10px">↑ real captured Aegis frames — hold card → denied timeline → live TUI (looping)</figcaption>
+      <figcaption class="note" style="margin-top:10px">↑ real Aegis output — hold card → denied timeline → live TUI (looping)</figcaption>
     </figure>
-
-    <div class="term" style="text-align:left; max-width:760px; margin:26px auto 0">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i>
-        <span class="ttl">agent proposes: rm -rf src</span></div>
-<pre>
-<span class="t-dim">────────────────────────────────────────────────────────────</span>
-<span class="t-red">⚠ Aegis hold — This command is catastrophic and cannot be undone.</span>
-<span class="t-dim">  recursively deletes files and directories. This is hard or impossible to undo.</span>
-
-    <span class="t-b">rm -rf src</span>
-
-  <span class="t-amb">[a] allow once   [d] deny   [r] always allow here</span>
-<span class="t-dim">────────────────────────────────────────────────────────────</span>
-</pre>
-    </div>
-    <p class="note" style="margin-top:14px">↑ a real frame from the running tool</p>
   </section>
 
   <section id="what">
@@ -117,43 +104,34 @@
       log — bordered panels, a detail pane, severity colors, and a risk gauge.
       Navigate, filter, open detail, approve/deny a held action, undo — all without
       leaving the terminal.</p>
-    <div class="term wide">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis tui</span></div>
-<pre>
-▦ Aegis  timeline                                                                                             6 events
-╭ timeline ────────────────────────────────────────────────────────╮╭ detail ────────────────────────────────────────╮
-│  time     agent        outcome  command                          ││held · catastrophic                             │
-│  02:42:32 claude-code  allowed  git status                       ││                                                │
-│  02:42:32 claude-code  allowed  cargo test                       ││command  git push --force origin main           │
-│  02:42:32 qwen         held     [ambiguous] make deploy          ││agent    shim                                   │
-│› 02:42:32 shim         held     [catastrophic] git push --force o││when     02:42:32                               │
-│  02:42:32 shim         denied   [catastrophic] rm -rf build      ││reason   rule                                   │
-│  02:42:32 claude-code  allowed  npm run lint                     ││summary  Force-pushes, overwriting remote       │
-│                                                                  ││history.                                        │
-│                                                                  ││                                                │
-│                                                                  ││                                                │
-│                                                                  ││█████████████████████████████████████████████▋  │
-│                                                                  ││██████████████████risk 95/100 ███████████████▋  │
-╰──────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
-j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
-</pre>
-    </div>
-    <p class="note">Calm by default; the one danger accent appears only when it must.
-      Honors <span class="muted">NO_COLOR</span>; reflows from 80×24 up.</p>
+    <figure style="margin:0">
+      <img src="tui.svg" alt="The Aegis TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
+           style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+    </figure>
+    <p class="note">Real rendered output. Calm by default; the one danger accent
+      appears only when it must. Honors <span class="muted">NO_COLOR</span>; reflows
+      from 80×24 up.</p>
   </section>
 
   <section id="highlights">
     <h2><span class="n">&gt;</span> why it's different</h2>
     <div class="cards">
-      <div class="card"><h3>Deterministic gate</h3>
-        <p>Rules block, not an LLM. <span class="k">Zero</span> catastrophic-as-safe,
-          enforced by a golden corpus + property tests.</p></div>
-      <div class="card"><h3>Reversible</h3>
+      <div class="card"><h3>Stops it before it happens</h3>
+        <p>Rules block — not an LLM rolling the dice. The decision is predictable
+          and <span class="k">can't be talked out of</span> by a clever prompt.
+          Zero catastrophic-as-safe, enforced by a golden corpus + property tests.</p></div>
+      <div class="card"><h3>Works with every agent</h3>
+        <p>Claude Code, Cursor, Codex, Qwen, Gemini — <span class="k">or any raw shell</span>.
+          One layer at the process level, wired in a single <span class="k">aegis init</span>.</p></div>
+      <div class="card"><h3>Reversible by default</h3>
         <p>Snapshots before destructive ops (reflink CoW). <span class="k">aegis undo</span>
-          brings files back — last action or whole session.</p></div>
-      <div class="card"><h3>One cross-agent log</h3>
-        <p>Every command from every agent on one <span class="k">hash-chained</span>,
-          tamper-evident timeline you can scrub in the TUI.</p></div>
+          brings files back; a filesystem backstop catches what slips past.</p></div>
+      <div class="card"><h3>Private &amp; auditable</h3>
+        <p>No cloud, no account, no telemetry. Every command lands on one
+          <span class="k">hash-chained</span>, tamper-evident log you own.</p></div>
+      <div class="card"><h3>Calm, then loud</h3>
+        <p>Safe commands fly through in <span class="k">sub-millisecond</span> time;
+          Aegis only interrupts for the ones that can actually hurt you.</p></div>
     </div>
     <p class="muted" style="margin-top:22px">See all six features, each with a real
       captured frame → <a href="features.html">features</a>.</p>

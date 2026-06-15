@@ -16,8 +16,12 @@ PAL = {
 }
 # CHARW is a safe upper bound on the real monospace advance at FS=15 (DejaVu Sans
 # Mono ≈9.03px); undersizing it clips the longest line and the TUI risk gauge.
-CHARW, LINEH, FS = 9.3, 20, 15
+CHARW, LINEH, FS = 9.1, 20, 15
 PADX, TOP = 18, 44  # title bar height ~36 + gap
+
+def grid_x(n):
+    """Explicit x position for each of n glyphs on the monospace grid."""
+    return " ".join(f"{PADX + k * CHARW:.1f}" for k in range(n)) if n else str(PADX)
 
 def colorize(line, rules):
     """Split a line into (text,color) segments by non-overlapping token rules."""
@@ -64,14 +68,24 @@ def main():
 
     y = TOP + 4
     for line in lines:
-        x = PADX
-        p.append(f'<text x="{x}" y="{y}" font-size="{FS}" xml:space="preserve">')
-        for txt, col in colorize(line, rules):
-            if not txt:
-                continue
-            esc = html.escape(txt).replace(" ", "&#160;")
-            p.append(f'<tspan fill="{col}">{esc}</tspan>')
-        p.append("</text>")
+        # Pin every glyph to an explicit x = PADX + col*CHARW so box-drawing
+        # chars (│ ─ ╭) can't drift the columns, regardless of how the fallback
+        # monospace font advances them. Critically, emit the whole <text> on a
+        # single line — with xml:space="preserve", newlines between </tspan> and
+        # the next <tspan> become real characters that consume positions from
+        # the x list, shifting every later tspan right (this is exactly what
+        # Chrome was doing while Firefox/Safari collapsed it).
+        xs = grid_x(len(line))
+        tspans = "".join(
+            f'<tspan fill="{col}">{html.escape(txt).replace(" ", "&#160;")}</tspan>'
+            for txt, col in colorize(line, rules)
+            if txt
+        )
+        # Note: no xml:space="preserve". Visible spaces are already &#160; (nbsp),
+        # so we don't need preserve mode — and dropping it means newlines around
+        # tspans inside this <text> are default-collapsed and can't consume x
+        # slots from the grid list.
+        p.append(f'<text x="{xs}" y="{y}" font-size="{FS}">{tspans}</text>')
         y += LINEH
     p.append("</svg>")
     open(out, "w", encoding="utf-8").write("\n".join(p))

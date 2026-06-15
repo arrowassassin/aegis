@@ -158,10 +158,19 @@ fn init_print_path_emits_export_line() {
 
 #[test]
 fn bare_invocation_prints_banner() {
-    let out = aegis().output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    // Point at a dead socket + clean data dir so the banner deterministically
+    // reports "not running" and suggests `aegis init`.
+    let out = aegis()
+        .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+        .env("AEGIS_DB", tmp.path().join("events.db"))
+        .env("AEGIS_DATA_DIR", tmp.path())
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("local-first"));
+    assert!(text.contains("not running"));
     assert!(text.contains("aegis init"));
 }
 
@@ -261,19 +270,25 @@ fn init_starts_daemon_and_status_reports_running() {
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("daemon"));
 
-    // Status should now see a running daemon.
-    let mut status = aegis();
-    status.arg("status");
-    common(&mut status);
-    let s = status.output().unwrap();
-    let text = String::from_utf8_lossy(&s.stdout);
+    // Status should now see a running daemon. Poll: the daemon binds
+    // asynchronously and a loaded CI runner can be slow.
+    let mut text = String::new();
+    for _ in 0..50 {
+        let mut status = aegis();
+        status.arg("status");
+        common(&mut status);
+        text = String::from_utf8_lossy(&status.output().unwrap().stdout).into_owned();
+        if text.contains("running") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 
-    // Stop the daemon we started before asserting (best-effort cleanup).
-    let daemon_bin =
-        std::path::Path::new(env!("CARGO_BIN_EXE_aegis")).with_file_name("aegis-daemon");
-    let _ = std::process::Command::new("pkill")
-        .args(["-f", &daemon_bin.to_string_lossy()])
-        .status();
+    // Stop the daemon WE started by its recorded PID — not a broad `pkill`, which
+    // would also kill daemons spawned by parallel test binaries.
+    if let Ok(pid) = std::fs::read_to_string(data.join("aegis.pid")) {
+        let _ = std::process::Command::new("kill").arg(pid.trim()).status();
+    }
 
     assert!(
         text.contains("running"),

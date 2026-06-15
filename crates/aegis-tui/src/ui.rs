@@ -148,11 +148,26 @@ fn fmt_time(ev: &LoggedEvent) -> String {
     ev.ts.format(&f).unwrap_or_else(|_| "--:--:--".into())
 }
 
+fn short_session(ev: &LoggedEvent) -> String {
+    match &ev.session {
+        Some(s) => s.chars().take(8).collect(),
+        None => "—".to_string(),
+    }
+}
+
 fn render_list(f: &mut Frame, app: &App, area: Rect) {
     let visible = app.visible();
-    let header = Row::new(["time", "agent", "outcome", "command"])
-        .style(dim(app))
-        .height(1);
+    // Show a session column when there's room; the detail pane always has the
+    // full id, so on narrow terminals we drop the column rather than scroll.
+    let show_session = area.width >= 92;
+
+    let mut head = vec!["time", "agent"];
+    if show_session {
+        head.push("session");
+    }
+    head.push("outcome");
+    head.push("command");
+    let header = Row::new(head).style(dim(app)).height(1);
 
     let rows = visible.iter().map(|ev| {
         let outcome = Cell::from(Span::styled(
@@ -166,20 +181,34 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
             ),
             Span::raw(ev.command.clone()),
         ]);
-        Row::new(vec![
+        let mut cells = vec![
             Cell::from(fmt_time(ev)),
             Cell::from(truncate(&ev.agent, 12)),
-            outcome,
-            Cell::from(command),
-        ])
+        ];
+        if show_session {
+            cells.push(Cell::from(Span::styled(short_session(ev), dim(app))));
+        }
+        cells.push(outcome);
+        cells.push(Cell::from(command));
+        Row::new(cells)
     });
 
-    let widths = [
-        Constraint::Length(8),
-        Constraint::Length(12),
-        Constraint::Length(8),
-        Constraint::Min(10),
-    ];
+    let widths: Vec<Constraint> = if show_session {
+        vec![
+            Constraint::Length(8),
+            Constraint::Length(12),
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Min(10),
+        ]
+    } else {
+        vec![
+            Constraint::Length(8),
+            Constraint::Length(12),
+            Constraint::Length(8),
+            Constraint::Min(10),
+        ]
+    };
     let highlight = if app.color {
         Style::default()
             .bg(Color::Indexed(236))
@@ -303,11 +332,20 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(Span::styled(help, dim(app))), rows[0]);
 
     let second = match app.mode {
-        Mode::Filter => Line::from(vec![
-            Span::styled("/", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(app.filter.clone()),
-            Span::styled("▏", dim(app)),
-        ]),
+        Mode::Filter => {
+            let mut spans = vec![
+                Span::styled("/", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(app.filter.clone()),
+                Span::styled("▏", dim(app)),
+            ];
+            if app.filter.is_empty() {
+                spans.push(Span::styled(
+                    "  agent:claude-code · session:4a87 · since:10m · before:1d · or text",
+                    dim(app),
+                ));
+            }
+            Line::from(spans)
+        }
         _ => {
             if let Some(status) = &app.status {
                 Line::from(Span::raw(status.clone()))

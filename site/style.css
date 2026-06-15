@@ -67,10 +67,11 @@ header.nav {
 }
 .nav .wrap { display: flex; align-items: center; gap: 18px; height: 64px; }
 .brand { font-family: "Press Start 2P"; font-size: 16px; color: var(--green);
-  text-shadow: 2px 2px 0 #0a3a1f; }
+  text-shadow: 2px 2px 0 #0a3a1f; display: inline-flex; align-items: center;
+  line-height: 1; }
 .brand .blink { color: var(--amber); }
-.nav nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
-.nav nav a { font-size: 9px; color: var(--dim); }
+.nav nav { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+.nav nav a { font-size: 9px; color: var(--dim); line-height: 1; }
 .nav nav a:hover, .nav nav a.active { color: var(--green); }
 
 /* landing highlight cards */
@@ -185,7 +186,8 @@ footer a { color: var(--cyan); }
 
 /* theme toggle */
 .themebtn { font-family:"Press Start 2P"; font-size:10px; background:var(--panel);
-  color:var(--ink); border:2px solid var(--line); padding:7px 9px; cursor:pointer; }
+  color:var(--ink); border:2px solid var(--line); padding:7px 9px; cursor:pointer;
+  display:inline-flex; align-items:center; line-height:1; }
 .themebtn:hover { color:var(--green); }
 
 /* ---- light theme (chrome flips; terminals stay dark, as terminals do) ---- */
