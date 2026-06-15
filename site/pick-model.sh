@@ -1,7 +1,7 @@
 #!/bin/sh
 # Aegis model picker — fetch *compatible* GGUF options and install one.
 #
-#   curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh
+#   curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh
 #
 # Aegis runs fine with no model (the default heuristic scorer is offline and
 # always available). This optional helper fetches a short, RAM-appropriate list

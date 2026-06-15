@@ -1,7 +1,7 @@
 #!/bin/sh
 # Aegis remote installer — no repo clone required.
 #
-#   curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh
+#   curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh
 #
 # Downloads the prebuilt release binaries for your OS/arch (verified against
 # SHA256SUMS) and installs them to a bin dir. If no prebuilt build matches (or
@@ -20,7 +20,7 @@ BIN_DIR="${AEGIS_BIN_DIR:-$HOME/.local/bin}"
 VERSION=""
 FROM_SOURCE=0
 WITH_MODEL=0
-PICKER_URL="https://arrowassassin.github.io/aegis/pick-model.sh"
+PICKER_URL="https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh"
 
 say()  { printf '\033[1;32maegis\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33maegis\033[0m %s\n' "$*" >&2; }

@@ -45,8 +45,9 @@ All build phases are implemented (see
 - **Phase 1 — Gate:** a deterministic rule engine that holds dangerous commands
   for one-key approval, with per-repo decision memory and `.aegis.toml` policy.
 - **Phase 2 — Explain + score:** a warm Tier-2 scorer fills a plain-English
-  summary and a risk score for the ambiguous band, driving graduated unattended
-  mode (heuristic by default; real CPU GGUF inference behind `--features llama`).
+  summary and a risk score for the ambiguous band (heuristic by default; real CPU
+  GGUF inference behind `--features llama`). Escalation-only — it never downgrades
+  a rules decision.
 - **Phase 3 — Undo:** snapshots before destructive ops (reflink CoW + copy
   fallback) and `aegis undo` / `aegis undo --session`.
 - **Phase 4 — Recorder UI:** an FS-watcher backstop and a live `ratatui` timeline
@@ -71,7 +72,7 @@ One line — downloads the prebuilt binaries (checksum-verified), or builds from
 source if there's no prebuilt build for your platform:
 
 ```sh
-curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh
+curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh
 ```
 
 Or straight from source with Cargo (no clone):
@@ -94,7 +95,7 @@ lists RAM-appropriate options from the Hugging Face API and prints the one env v
 to set (or fold it into install with `| sh -s -- --with-model`):
 
 ```sh
-curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh
+curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh
 # already have a GGUF? skip the picker:  export AEGIS_MODEL_FILE=/path/to/model.gguf
 ```
 

@@ -5,9 +5,9 @@
 Aegis's decision to **block** a catastrophic command is always deterministic
 rules. The model never makes that call. Its only jobs are to **explain** (a
 one-sentence summary for the hold card) and to **score** the *ambiguous band*
-(a `risk` 0–100), which drives graduated unattended mode. Its influence is
-escalation-only: it can add caution, never unlock a rule-based block, and `Safe`
-commands stay on a model-free fast path.
+(a `risk` 0–100) for the human reviewing the queue. Its influence is
+escalation-only: it can add caution, never unlock or downgrade a rule-based
+decision, and `Safe` commands stay on a model-free fast path.
 
 ## Backends
 
@@ -59,9 +59,9 @@ instruct GGUF models from the Hugging Face API, downloads your choice, prints it
 SHA-256, and tells you the one env var to set:
 
 ```sh
-curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh
+curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh
 # or during install:
-curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh -s -- --with-model
+curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh -s -- --with-model
 ```
 
 It constrains the query (`filter=gguf`, `pipeline_tag=text-generation`, sized to

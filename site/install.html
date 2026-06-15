@@ -45,7 +45,7 @@
       (checksum-verified) or builds from source if your platform has no prebuilt:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh</pre>
+<pre>curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh</pre>
     </div>
     <p class="muted">Or straight from source with Cargo (also no clone):</p>
     <div class="cmd">
@@ -86,7 +86,7 @@
       downloads your choice, and prints the one env var to set:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh</pre>
+<pre>curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh</pre>
     </div>
     <p class="muted">Or fold it into the install above with
       <span class="t-grn">| sh -s -- --with-model</span>. The query is constrained
@@ -119,15 +119,15 @@
       <button class="copy">copy</button>
 <pre># .aegis.toml
 mode = "attended"      # attended · unattended · notify
-threshold = 50         # unattended: deny ambiguous at/above this risk
 
 [rules]
 allow = ["cargo run", "rm -rf target", "rm -rf node_modules"]
 deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
     </div>
-    <p class="muted">An <span class="muted">allow</span> rule tames the ambiguous band
-      but never downgrades a rule-detected catastrophic command — that hard floor
-      always stands.</p>
+    <p class="muted">In <span class="muted">unattended</span> mode, ambiguous commands
+      are denied and queued — only an <span class="muted">allow</span> rule (your
+      decision) lets one auto-proceed. An allow never downgrades a rule-detected
+      catastrophic command — that hard floor always stands.</p>
   </section>
 
   <section id="commands">
