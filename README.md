@@ -13,14 +13,24 @@ leaves your machine.
 
 ## Status
 
-Building toward the Phase 0/1 milestone (see
-[`aegis-phase0-1-tasklist.md`](aegis-phase0-1-tasklist.md)).
+All build phases are implemented (see
+[`aegis-phase0-1-tasklist.md`](aegis-phase0-1-tasklist.md) and
+[`aegis-phase2-5-designdoc.md`](aegis-phase2-5-designdoc.md)):
 
-- **Phase 0 — Recorder (done):** agent-agnostic interception (`$PATH` shim +
-  Claude Code hook + `aegis-exec` MCP server) that records every command to a
-  tamper-evident, hash-chained SQLite log.
-- **Phase 1 — Gate (in progress):** a deterministic rule engine that holds
-  dangerous commands for one-key approval, with per-repo memory and policy.
+- **Phase 0 — Recorder:** agent-agnostic interception (`$PATH` shim + Claude Code
+  hook + `aegis-exec` MCP server) recording every command to a tamper-evident,
+  hash-chained SQLite log.
+- **Phase 1 — Gate:** a deterministic rule engine that holds dangerous commands
+  for one-key approval, with per-repo decision memory and `.aegis.toml` policy.
+- **Phase 2 — Explain + score:** a warm Tier-2 scorer fills a plain-English
+  summary and a risk score for the ambiguous band, driving graduated unattended
+  mode (heuristic by default; real CPU GGUF inference behind `--features llama`).
+- **Phase 3 — Undo:** snapshots before destructive ops (reflink CoW + copy
+  fallback) and `aegis undo` / `aegis undo --session`.
+- **Phase 4 — Recorder UI:** an FS-watcher backstop and a live `ratatui` timeline
+  (`aegis tui`).
+- **Phase 5 — Launch:** the panic kill-switch (`aegis panic` / `aegis resume`),
+  `aegis init` polish, and a cross-platform release workflow.
 
 ## Crates
 
@@ -38,9 +48,16 @@ Building toward the Phase 0/1 milestone (see
 ```sh
 cargo build
 ./target/debug/aegis init      # detect agents, wire interception, start the daemon
-./target/debug/aegis status    # daemon / socket / log health
+./target/debug/aegis status    # daemon / socket / log / kill-switch health
 ./target/debug/aegis log       # the recent command timeline
+./target/debug/aegis tui       # live, interactive timeline (j/k, /, enter, u, q)
+./target/debug/aegis undo      # restore the last destructive action
+./target/debug/aegis watch .   # FS-watcher backstop for un-intercepted changes
+./target/debug/aegis panic     # kill-switch: halt all agent actions (resume to clear)
 ```
+
+The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
+are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `demo.md`).
 
 `aegis init` prints a `PATH` line to prepend so the shim can guard raw
 shell-outs. Pointing tool-calling agents at the MCP server is documented in

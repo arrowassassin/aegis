@@ -98,3 +98,8 @@ the locked product decisions this build implements.
   with ratatui TestBackend at multiple sizes; teardown uses ratatui::init/restore
   (panic-safe). frontend-design skill was unavailable in the build env, so its
   principles were applied directly from the CLAUDE.md TUI requirements.
+- Phase 5: kill-switch is a flag file (panic.flag) beside the event DB, checked
+  first in decide() so it halts even Safe commands instantly across processes;
+  panic/resume are logged. Release workflow publishes SHA256SUMS; code signing is
+  left as a documented human step (needs secrets) per the autonomy guardrails.
+  init --print-path enables shell-rc wiring via eval.

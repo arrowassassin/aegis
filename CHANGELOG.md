@@ -120,6 +120,16 @@ All notable changes to Aegis are documented here. The format loosely follows
     support; panic-safe teardown via `ratatui::init`/`restore`. Covered by
     state-transition tests and `TestBackend` render tests at several sizes.
 
+- **Phase 5** — launch hardening.
+  - **Panic kill-switch:** `aegis panic` engages a flag the daemon checks *first*,
+    instantly denying every command (even Safe); `aegis resume` clears it. Surfaced
+    in `aegis status` and recorded in the log.
+  - **`aegis init` polish:** `--print-path` (for `eval "$(aegis init --print-path)"`)
+    and `AEGIS_DATA_DIR` support; scorer/kill-switch shown in status.
+  - **Release workflow:** tag-triggered cross-platform builds (Linux/macOS/Windows)
+    that publish `SHA256SUMS`; artifact signing is left as a documented human
+    checkpoint (never touches secrets autonomously).
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

@@ -84,6 +84,53 @@ fn undo_restores_a_snapshotted_file() {
 }
 
 #[test]
+fn panic_engages_and_resume_clears_kill_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("events.db");
+    let common = |c: &mut Command| {
+        c.env("AEGIS_DB", &db)
+            .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+            .env("NO_COLOR", "1");
+    };
+
+    let mut p = aegis();
+    p.arg("panic");
+    common(&mut p);
+    let out = p.output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("ENGAGED"));
+    assert!(tmp.path().join("panic.flag").exists());
+
+    // status reflects it.
+    let mut s = aegis();
+    s.arg("status");
+    common(&mut s);
+    let st = s.output().unwrap();
+    assert!(String::from_utf8_lossy(&st.stdout).contains("KILL-SWITCH"));
+
+    let mut r = aegis();
+    r.arg("resume");
+    common(&mut r);
+    let out = r.output().unwrap();
+    assert!(out.status.success());
+    assert!(!tmp.path().join("panic.flag").exists());
+}
+
+#[test]
+fn init_print_path_emits_export_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = aegis()
+        .args(["init", "--print-path"])
+        .env("AEGIS_DATA_DIR", tmp.path().join("data"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("export PATH="));
+    assert!(text.contains("shims"));
+}
+
+#[test]
 fn bare_invocation_prints_banner() {
     let out = aegis().output().unwrap();
     assert!(out.status.success());

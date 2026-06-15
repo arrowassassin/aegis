@@ -30,6 +30,10 @@ enum Command {
         /// Wire interception but do not start the daemon.
         #[arg(long)]
         no_daemon: bool,
+        /// Print only the shell line that adds the shim dir to PATH, then exit.
+        /// Use as: `eval "$(aegis init --print-path)"`.
+        #[arg(long)]
+        print_path: bool,
     },
     /// Show daemon, socket, log, and interception status.
     Status,
@@ -53,6 +57,10 @@ enum Command {
     },
     /// Open the live timeline TUI.
     Tui,
+    /// PANIC: engage the kill-switch — halt all current and queued agent actions.
+    Panic,
+    /// Clear the kill-switch and resume normal operation.
+    Resume,
 }
 
 fn main() -> Result<()> {
@@ -64,12 +72,59 @@ fn main() -> Result<()> {
             println!("Run `aegis --help` for usage, or `aegis init` to get started.");
             Ok(())
         }
-        Some(Command::Init { no_daemon }) => cmd_init(no_daemon),
+        Some(Command::Init {
+            no_daemon,
+            print_path,
+        }) => {
+            if print_path {
+                println!("export PATH=\"{}:$PATH\"", shim_dir().display());
+                Ok(())
+            } else {
+                cmd_init(no_daemon)
+            }
+        }
         Some(Command::Status) => cmd_status(),
         Some(Command::Log { number }) => cmd_log(number),
         Some(Command::Undo { session }) => cmd_undo(session),
         Some(Command::Watch { paths }) => aegis_daemon::watch::run(&paths),
         Some(Command::Tui) => aegis_tui::run(&default_db_path(), &snapshot_dir()),
+        Some(Command::Panic) => cmd_panic(),
+        Some(Command::Resume) => cmd_resume(),
+    }
+}
+
+fn cmd_panic() -> Result<()> {
+    let path = aegis_daemon::kill_switch_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&path, b"engaged\n").with_context(|| format!("write {}", path.display()))?;
+    log_control_event("panic", Decision::Deny, "kill-switch:engaged");
+    println!("⛔ Kill-switch ENGAGED. All agent actions are now denied.");
+    println!("   Run `aegis resume` to restore normal operation.");
+    Ok(())
+}
+
+fn cmd_resume() -> Result<()> {
+    let path = aegis_daemon::kill_switch_path();
+    if path.exists() {
+        std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    }
+    log_control_event("resume", Decision::Allow, "kill-switch:cleared");
+    println!("✓ Kill-switch cleared. Normal operation resumed.");
+    Ok(())
+}
+
+/// Append a control action (panic/resume) to the event log directly.
+fn log_control_event(name: &str, decision: Decision, reason: &str) {
+    let db = default_db_path();
+    if let Some(parent) = db.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    if let Ok(log) = EventLog::open(&db) {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let cmd = ProposedCommand::new("aegis", cwd, vec![name.to_string()], name);
+        let _ = log.log_event(&cmd, &Verdict::rules(Class::Safe, decision, reason), None);
     }
 }
 
@@ -264,6 +319,11 @@ fn cmd_status() -> Result<()> {
     let running = Client::is_daemon_running();
     println!("  daemon:  {}", if running { "running" } else { "stopped" });
     println!("  socket:  {}", ipc::socket_path().display());
+
+    // The panic kill-switch is the loudest state — surface it prominently.
+    if aegis_daemon::kill_switch_path().exists() {
+        println!("  KILL-SWITCH: ENGAGED — all actions denied (run `aegis resume`)");
+    }
 
     let db = default_db_path();
     println!("  log:     {}", db.display());

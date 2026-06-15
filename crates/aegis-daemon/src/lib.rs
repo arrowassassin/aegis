@@ -23,6 +23,17 @@ pub use ipc::{Client, Observation, Resolution, Server};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The kill-switch flag file name, alongside the event-log database.
+pub const KILL_SWITCH_FILE: &str = "panic.flag";
+
+/// Path to the panic kill-switch flag (alongside the default event log).
+pub fn kill_switch_path() -> PathBuf {
+    default_db_path()
+        .parent()
+        .map(|p| p.join(KILL_SWITCH_FILE))
+        .unwrap_or_else(|| std::env::temp_dir().join(KILL_SWITCH_FILE))
+}
+
 /// Resolve the event-log database path. Override with `AEGIS_DB` (handy in tests).
 pub fn default_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("AEGIS_DB") {
@@ -41,6 +52,7 @@ pub struct Daemon {
     mode: Mode,
     scorer: Box<dyn aegis_model::Scorer>,
     snapshot_dir: PathBuf,
+    kill_path: PathBuf,
 }
 
 impl Daemon {
@@ -51,10 +63,12 @@ impl Daemon {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create data dir {}", parent.display()))?;
         }
-        let snapshot_dir = db_path
+        let data_dir = db_path
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
-            .join("snapshots");
+            .to_path_buf();
+        let snapshot_dir = data_dir.join("snapshots");
+        let kill_path = data_dir.join(KILL_SWITCH_FILE);
         let log = EventLog::open(&db_path)
             .with_context(|| format!("open event log at {}", db_path.display()))?;
         Ok(Self {
@@ -62,7 +76,13 @@ impl Daemon {
             mode: Mode::default(),
             scorer: aegis_model::default_scorer(),
             snapshot_dir,
+            kill_path,
         })
+    }
+
+    /// Whether the panic kill-switch is currently engaged.
+    pub fn kill_switch_engaged(&self) -> bool {
+        self.kill_path.exists()
     }
 
     /// The directory snapshots are stored under.
@@ -111,6 +131,13 @@ impl Daemon {
     /// ambiguous band, and its influence is escalation-only. Safe stays on the
     /// model-free fast path.
     pub fn decide(&self, cmd: &ProposedCommand) -> Verdict {
+        // Panic kill-switch: halt everything, including Safe, the instant it is
+        // engaged. Checked first, before any other logic.
+        if self.kill_switch_engaged() {
+            let m = aegis_core::classify(cmd);
+            return Verdict::rules(m.class, Decision::Deny, "kill-switch: all actions halted");
+        }
+
         let policy = load_policy(&cmd.cwd);
         let mode = policy.mode.unwrap_or(self.mode);
 
