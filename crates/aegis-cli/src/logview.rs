@@ -43,8 +43,16 @@ pub fn render_log(events: &[LoggedEvent], color: bool) -> String {
             .format(&time_fmt)
             .unwrap_or_else(|_| "--:--:--".into());
         let decision = decision_label(ev.decision);
-        let tag = class_tag(ev.class);
-        let command = truncate(&ev.command, 60);
+        let tag = if ev.redacted {
+            String::new()
+        } else {
+            class_tag(ev.class)
+        };
+        let command = if ev.redacted {
+            "⟨redacted⟩".to_string()
+        } else {
+            truncate(&ev.command, 60)
+        };
 
         let line = format!(
             "{t}  {agent:<12}  {decision}  {tag}{command}",
@@ -52,10 +60,14 @@ pub fn render_log(events: &[LoggedEvent], color: bool) -> String {
         );
 
         if color {
-            match ev.decision {
-                Decision::Deny => out.push_str(&format!("{DENY}{line}{RESET}\n")),
-                Decision::Hold => out.push_str(&format!("{ACCENT}{line}{RESET}\n")),
-                Decision::Allow => out.push_str(&format!("{line}\n")),
+            if ev.redacted {
+                out.push_str(&format!("{DIM}{line}{RESET}\n"));
+            } else {
+                match ev.decision {
+                    Decision::Deny => out.push_str(&format!("{DENY}{line}{RESET}\n")),
+                    Decision::Hold => out.push_str(&format!("{ACCENT}{line}{RESET}\n")),
+                    Decision::Allow => out.push_str(&format!("{line}\n")),
+                }
             }
         } else {
             out.push_str(&line);

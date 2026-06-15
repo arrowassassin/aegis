@@ -25,6 +25,8 @@ struct HookInput {
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
     tool_name: Option<String>,
     #[serde(default)]
     tool_input: Option<ToolInput>,
@@ -86,7 +88,8 @@ pub fn handle(input: &str) -> HookOutcome {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let argv = shell::split(&command);
-    let proposed = ProposedCommand::new("claude-code", cwd, argv, command);
+    let proposed =
+        ProposedCommand::new("claude-code", cwd, argv, command).with_session(parsed.session_id);
 
     match Client::send(&proposed) {
         Ok(verdict) => map_verdict(&verdict),

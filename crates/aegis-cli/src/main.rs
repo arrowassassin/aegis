@@ -42,6 +42,34 @@ enum Command {
         /// How many recent events to show.
         #[arg(short = 'n', long, default_value_t = 20)]
         number: usize,
+        /// Also show redacted entries (as ⟨redacted⟩ placeholders).
+        #[arg(long)]
+        show_redacted: bool,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+    /// Redact (hide) events without breaking the hash chain. Pass an ID to hide
+    /// one, or filters to hide many. The rows stay on disk; use `purge` to erase.
+    Redact {
+        /// The event id (or unique prefix) to redact. Omit to redact by filter.
+        id: Option<String>,
+        /// Why it's being hidden (recorded in the redaction).
+        #[arg(long, default_value = "redacted by user")]
+        reason: String,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+    /// Hard-erase events matching filters: delete rows, rebuild the chain, and
+    /// record a purge marker. Deliberate and irreversible — requires --yes.
+    Purge {
+        /// Confirm the erasure (required; this rewrites history for the span).
+        #[arg(long)]
+        yes: bool,
+        /// Why it's being erased (recorded in the purge marker).
+        #[arg(long, default_value = "purged by user")]
+        reason: String,
+        #[command(flatten)]
+        filter: FilterArgs,
     },
     /// Undo the last destructive action (or the whole session with --session).
     Undo {
@@ -75,6 +103,87 @@ enum Command {
     Resume,
 }
 
+/// Shared filter flags for `log`, `redact`, and `purge`.
+#[derive(Debug, Clone, clap::Args)]
+struct FilterArgs {
+    /// Only this agent (claude-code, cursor, codex, qwen, gemini, shim, mcp).
+    #[arg(long)]
+    agent: Option<String>,
+    /// Only this session id.
+    #[arg(long)]
+    session: Option<String>,
+    /// Only this class (safe | ambiguous | catastrophic).
+    #[arg(long)]
+    class: Option<String>,
+    /// Case-insensitive substring match on the command (literal, not a pattern).
+    #[arg(long)]
+    grep: Option<String>,
+    /// Only events at/after this time (RFC3339, or relative: day|week|month|<N>d|<N>h).
+    #[arg(long)]
+    since: Option<String>,
+    /// Only events before this time (same formats as --since).
+    #[arg(long)]
+    before: Option<String>,
+}
+
+impl FilterArgs {
+    /// True when no filter at all is set (a guard against accidental bulk ops).
+    fn is_empty(&self) -> bool {
+        self.agent.is_none()
+            && self.session.is_none()
+            && self.class.is_none()
+            && self.grep.is_none()
+            && self.since.is_none()
+            && self.before.is_none()
+    }
+
+    /// Build a core [`Filter`] from these flags.
+    fn to_filter(&self, include_redacted: bool, limit: Option<usize>) -> Result<aegis_core::Filter> {
+        let class = match self.class.as_deref() {
+            None => None,
+            Some("safe") => Some(aegis_core::Class::Safe),
+            Some("ambiguous") => Some(aegis_core::Class::Ambiguous),
+            Some("catastrophic") => Some(aegis_core::Class::Catastrophic),
+            Some(other) => anyhow::bail!("unknown class '{other}' (safe|ambiguous|catastrophic)"),
+        };
+        Ok(aegis_core::Filter {
+            agent: self.agent.clone(),
+            session: self.session.clone(),
+            class,
+            grep: self.grep.clone(),
+            since: self.since.as_deref().map(parse_instant).transpose()?,
+            until: self.before.as_deref().map(parse_instant).transpose()?,
+            include_redacted,
+            limit,
+        })
+    }
+}
+
+/// Parse an instant: RFC3339, or a relative spec meaning "that long ago"
+/// (`day`, `week`, `month`, `<N>d`, `<N>h`).
+fn parse_instant(s: &str) -> Result<time::OffsetDateTime> {
+    use time::{Duration, OffsetDateTime};
+    let now = OffsetDateTime::now_utc();
+    let ago = |d: Duration| now - d;
+    let s = s.trim();
+    let parsed = match s {
+        "day" => ago(Duration::days(1)),
+        "week" => ago(Duration::weeks(1)),
+        "month" => ago(Duration::days(30)),
+        other => {
+            if let Some(n) = other.strip_suffix('d').and_then(|n| n.parse::<i64>().ok()) {
+                ago(Duration::days(n))
+            } else if let Some(n) = other.strip_suffix('h').and_then(|n| n.parse::<i64>().ok()) {
+                ago(Duration::hours(n))
+            } else {
+                OffsetDateTime::parse(other, &time::format_description::well_known::Rfc3339)
+                    .with_context(|| format!("invalid time '{other}' (RFC3339 or day|week|month|<N>d|<N>h)"))?
+            }
+        }
+    };
+    Ok(parsed)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -96,7 +205,13 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Status) => cmd_status(),
-        Some(Command::Log { number }) => cmd_log(number),
+        Some(Command::Log {
+            number,
+            show_redacted,
+            filter,
+        }) => cmd_log(number, show_redacted, &filter),
+        Some(Command::Redact { id, reason, filter }) => cmd_redact(id, &reason, &filter),
+        Some(Command::Purge { yes, reason, filter }) => cmd_purge(yes, &reason, &filter),
         Some(Command::Undo { session }) => cmd_undo(session),
         Some(Command::Watch { paths }) => aegis_daemon::watch::run(&paths),
         Some(Command::Tui) => aegis_tui::run(&default_db_path(), &snapshot_dir()),
@@ -420,18 +535,143 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-fn cmd_log(number: usize) -> Result<()> {
+fn cmd_log(number: usize, show_redacted: bool, filter: &FilterArgs) -> Result<()> {
     let db = default_db_path();
     if !db.exists() {
         print!("{}", logview::render_log(&[], false));
         return Ok(());
     }
     let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
-    let events = log.tail(number)?;
+    let f = filter.to_filter(show_redacted, Some(number))?;
+    let events = log.query(&f)?;
     let color = logview::use_color(
         std::env::var_os("NO_COLOR").is_some(),
         std::io::stdout().is_terminal(),
     );
     print!("{}", logview::render_log(&events, color));
     Ok(())
+}
+
+fn cmd_redact(id: Option<String>, reason: &str, filter: &FilterArgs) -> Result<()> {
+    let db = default_db_path();
+    let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
+
+    if let Some(prefix) = id {
+        // Resolve a (possibly abbreviated) id to the one matching event.
+        let full = resolve_event_id(&log, &prefix)?;
+        if log.redact(&full, reason)? {
+            println!("redacted {}", &full[..full.len().min(8)]);
+        } else {
+            println!("already redacted (or no such event)");
+        }
+        return Ok(());
+    }
+
+    if filter.is_empty() {
+        anyhow::bail!("refusing to redact everything: pass an ID or at least one filter");
+    }
+    let f = filter.to_filter(false, None)?;
+    let n = log.redact_matching(&f, reason)?;
+    println!("redacted {n} event(s) — hidden from views; chain intact (use `aegis purge` to erase)");
+    Ok(())
+}
+
+fn cmd_purge(yes: bool, reason: &str, filter: &FilterArgs) -> Result<()> {
+    let db = default_db_path();
+    let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
+
+    if filter.is_empty() {
+        anyhow::bail!("refusing to purge everything: pass at least one filter (--agent/--before/…)");
+    }
+    let f = filter.to_filter(true, None)?;
+    let count = log.count_matching(&f)?;
+    if count == 0 {
+        println!("nothing matched — nothing purged");
+        return Ok(());
+    }
+    if !yes {
+        anyhow::bail!(
+            "this will PERMANENTLY erase {count} event(s) and rewrite the chain for that span.\n  \
+             Re-run with --yes to confirm."
+        );
+    }
+    let removed = log.purge_matching(&f, reason)?;
+    println!("purged {removed} event(s); chain rebuilt and a purge marker recorded");
+    Ok(())
+}
+
+/// Resolve a full event id from a possibly-abbreviated prefix (unique match).
+fn resolve_event_id(log: &EventLog, prefix: &str) -> Result<String> {
+    let all = log.query(&aegis_core::Filter {
+        include_redacted: true,
+        ..aegis_core::Filter::default()
+    })?;
+    let matches: Vec<String> = all
+        .iter()
+        .map(|e| e.id.to_string())
+        .filter(|id| id.starts_with(prefix))
+        .collect();
+    match matches.len() {
+        0 => anyhow::bail!("no event matches id '{prefix}'"),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        n => anyhow::bail!("'{prefix}' is ambiguous ({n} events match) — use more characters"),
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    #[test]
+    fn parse_instant_relative_and_rfc3339() {
+        let now = time::OffsetDateTime::now_utc();
+        let wk = parse_instant("week").unwrap();
+        assert!(wk < now && (now - wk) >= time::Duration::days(6));
+        let h = parse_instant("12h").unwrap();
+        assert!((now - h) >= time::Duration::hours(11));
+        let d = parse_instant("3d").unwrap();
+        assert!((now - d) >= time::Duration::days(2));
+        assert!(parse_instant("2020-01-01T00:00:00Z").is_ok());
+        assert!(parse_instant("not-a-time").is_err());
+    }
+
+    #[test]
+    fn empty_filter_is_detected() {
+        let empty = FilterArgs {
+            agent: None,
+            session: None,
+            class: None,
+            grep: None,
+            since: None,
+            before: None,
+        };
+        assert!(empty.is_empty());
+        let set = FilterArgs {
+            agent: Some("shim".into()),
+            ..empty.clone()
+        };
+        assert!(!set.is_empty());
+    }
+
+    #[test]
+    fn to_filter_maps_class_and_rejects_unknown() {
+        let f = FilterArgs {
+            agent: Some("cursor".into()),
+            session: None,
+            class: Some("catastrophic".into()),
+            grep: Some("rm".into()),
+            since: None,
+            before: None,
+        };
+        let core = f.to_filter(false, Some(10)).unwrap();
+        assert_eq!(core.agent.as_deref(), Some("cursor"));
+        assert_eq!(core.class, Some(aegis_core::Class::Catastrophic));
+        assert_eq!(core.limit, Some(10));
+
+        let bad = FilterArgs {
+            class: Some("nope".into()),
+            ..f
+        };
+        assert!(bad.to_filter(false, None).is_err());
+    }
 }

@@ -50,7 +50,10 @@ pub fn run() -> ExitCode {
     let mut argv = Vec::with_capacity(cmd_args.len() + 1);
     argv.push(cmd_name.clone());
     argv.extend(cmd_args.iter().cloned());
-    let proposed = ProposedCommand::new("shim", cwd, argv, raw);
+    // Raw shell-outs have no agent session; group by AEGIS_SESSION if the shell
+    // exports one, else leave it unset (best-effort, per CLAUDE.md honesty).
+    let session = std::env::var("AEGIS_SESSION").ok();
+    let proposed = ProposedCommand::new("shim", cwd, argv, raw).with_session(session);
 
     match consult_daemon(&proposed) {
         DaemonOutcome::Allow => {}

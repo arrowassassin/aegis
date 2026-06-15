@@ -88,7 +88,8 @@ fn tools_list_response(id: Value) -> String {
                     "properties": {
                         "command": { "type": "string", "description": "The shell command to run." },
                         "cwd": { "type": "string", "description": "Working directory (optional)." },
-                        "agent": { "type": "string", "description": "Calling agent name, e.g. 'qwen' or 'codex' (optional)." }
+                        "agent": { "type": "string", "description": "Calling agent name, e.g. 'qwen' or 'codex' (optional)." },
+                        "session": { "type": "string", "description": "Session id for grouping in the timeline (optional)." }
                     },
                     "required": ["command"]
                 }
@@ -119,8 +120,15 @@ fn tools_call_response(id: Value, req: &Value) -> String {
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    // One session per server process (a client connection), overridable per call.
+    let session = args
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("mcp-{}", std::process::id()));
 
-    let outcome = exec_through_aegis(&agent, cwd, &command);
+    let outcome = exec_through_aegis(&agent, cwd, &session, &command);
     result_response(
         id,
         json!({
@@ -136,9 +144,10 @@ struct ToolOutcome {
 }
 
 /// The full guarded-execution path: propose → decide → (allow) run → report.
-fn exec_through_aegis(agent: &str, cwd: PathBuf, command: &str) -> ToolOutcome {
+fn exec_through_aegis(agent: &str, cwd: PathBuf, session: &str, command: &str) -> ToolOutcome {
     let argv = shell::split(command);
-    let proposed = ProposedCommand::new(agent, cwd.clone(), argv, command.to_string());
+    let proposed = ProposedCommand::new(agent, cwd.clone(), argv, command.to_string())
+        .with_session(Some(session.to_string()));
 
     let id = proposed.id.to_string();
     let decision = match Client::send(&proposed) {
