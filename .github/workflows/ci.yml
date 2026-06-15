@@ -20,7 +20,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      # Default features only: the `llama`/`download` backends pull a C/C++
+      # toolchain + native deps and are intentionally not built in CI (see
+      # docs/model.md). They are linted locally when that work is touched.
+      - run: cargo clippy --all-targets -- -D warnings
 
   test:
     name: test (${{ matrix.os }})

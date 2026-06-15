@@ -65,6 +65,9 @@ impl LlamaScorer {
     }
 
     /// Run inference and parse the JSON answer; returns None on any failure.
+    // `token_to_str` + `Special::Tokenize` are deprecated in newer llama-cpp-2 but
+    // remain the stable API at the pinned 0.1.x; allowed here until the pin moves.
+    #[allow(deprecated)]
     fn infer(&self, cmd: &ProposedCommand, class: Class) -> Option<ModelOutput> {
         let _lock = self.guard.lock().ok()?;
         let prompt = build_prompt(&cmd.raw, class);
@@ -87,8 +90,11 @@ impl LlamaScorer {
 
         let mut sampler = LlamaSampler::greedy();
         let mut out = String::new();
-        let mut n_cur = batch.n_tokens();
-        for _ in 0..MAX_TOKENS {
+        let start = batch.n_tokens();
+        let mut n_cur = start;
+        // Greedy-decode up to MAX_TOKENS, stopping at EOG or the closing brace of
+        // the forced-short JSON object.
+        while n_cur < start + MAX_TOKENS {
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
             if self.model.is_eog_token(token) {
@@ -97,7 +103,7 @@ impl LlamaScorer {
             if let Ok(piece) = self.model.token_to_str(token, Special::Tokenize) {
                 out.push_str(&piece);
                 if out.contains('}') {
-                    break; // forced-short JSON object
+                    break;
                 }
             }
             batch.clear();

@@ -142,7 +142,7 @@ pub fn ensure_weights(spec: &ModelSpec, dir: &Path) -> Result<PathBuf> {
             let _ = std::fs::remove_file(&path);
             bail!("downloaded weights failed checksum for {}", spec.id);
         }
-        return Ok(path);
+        Ok(path)
     }
     #[cfg(not(feature = "download"))]
     {
