@@ -171,12 +171,16 @@ fn first_char<R: std::io::BufRead>(mut reader: R) -> Option<char> {
     line.trim().chars().next().map(|c| c.to_ascii_lowercase())
 }
 
-/// Whether the shim should block when the daemon is unreachable.
+/// Whether the shim should block when the daemon is unreachable. True if the
+/// admin-set fail-closed marker is present (the agent can't unset a root-owned
+/// marker) OR the `KINTSUGI_FAIL_CLOSED` env var opts in for personal use. The
+/// marker wins, so an agent can't re-open the gate with `KINTSUGI_FAIL_CLOSED=0`.
 fn fail_closed() -> bool {
-    matches!(
-        std::env::var("KINTSUGI_FAIL_CLOSED").ok().as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    )
+    kintsugi_daemon::is_fail_closed_marked()
+        || matches!(
+            std::env::var("KINTSUGI_FAIL_CLOSED").ok().as_deref(),
+            Some("1") | Some("true") | Some("yes")
+        )
 }
 
 /// Split the program invocation into `(command, args)`.

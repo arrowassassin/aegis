@@ -105,11 +105,15 @@ fn held_for_approval(reason: &str, id: &str) -> String {
     )
 }
 
+/// True if the admin-set fail-closed marker is present (an agent can't unset a
+/// root-owned marker) OR the `KINTSUGI_FAIL_CLOSED` env var opts in. The marker
+/// wins, so `KINTSUGI_FAIL_CLOSED=0` can't re-open the gate.
 fn fail_closed() -> bool {
-    matches!(
-        std::env::var("KINTSUGI_FAIL_CLOSED").ok().as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    )
+    kintsugi_daemon::is_fail_closed_marked()
+        || matches!(
+            std::env::var("KINTSUGI_FAIL_CLOSED").ok().as_deref(),
+            Some("1") | Some("true") | Some("yes")
+        )
 }
 
 /// Parse the `--agent <id>` flag from argv, defaulting to Claude Code.

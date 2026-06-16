@@ -52,10 +52,13 @@ pub fn provision(password_file: Option<PathBuf>, force: bool) -> Result<()> {
             bail!("passwords did not match");
         }
     }
-    let prov =
-        admin::provision(&pw, &LockedSettings::default()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let settings = LockedSettings::default();
+    let prov = admin::provision(&pw, &settings).map_err(|e| anyhow::anyhow!("{e}"))?;
     admin::save_vault(&path, &prov.vault)
         .with_context(|| format!("write vault {}", path.display()))?;
+    // Keep the daemon-free fail-closed marker in sync with the sealed setting, so
+    // the shim/hook honor it even with the daemon down (default: off).
+    let _ = kintsugi_daemon::set_fail_closed_marker(settings.fail_closed);
 
     println!("✓ Kintsugi is now admin-locked — stopping or disabling it requires this password.");
     println!("  vault: {}", path.display());
