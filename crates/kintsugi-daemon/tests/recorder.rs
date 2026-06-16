@@ -142,6 +142,51 @@ fn record_cannot_forge_an_agent_label() {
 }
 
 #[test]
+fn recoverer_snapshots_a_destructive_human_command_for_undo() {
+    // The closed loop: a human is about to destroy a file; the recorder (fired
+    // from a shell preexec hook, before the command runs) snapshots it, so
+    // `kintsugi undo` can recover the mistake — the same recovery agents get.
+    let mut h = start(1);
+    let victim = h.db.with_file_name("data.txt");
+    std::fs::write(&victim, b"original").unwrap();
+
+    let raw = format!("rm -rf {}", victim.display());
+    let cmd = ProposedCommand::new(
+        "shell",
+        h.db.parent().unwrap(),
+        vec!["rm".into(), "-rf".into(), victim.display().to_string()],
+        raw,
+    );
+    Client::record(&cmd).unwrap();
+    h.join();
+
+    let log = EventLog::open(&h.db).unwrap();
+    let tail = log.tail(1).unwrap();
+    assert_eq!(tail[0].class, Class::Catastrophic);
+    assert!(
+        tail[0].snapshot_id.is_some(),
+        "a destructive human command must be snapshotted for undo"
+    );
+
+    // The human's mistake actually happens.
+    std::fs::remove_file(&victim).unwrap();
+    assert!(!victim.exists());
+
+    // Undo restores it from the just-in-time snapshot.
+    let snapshot_dir = h.db.with_file_name("snapshots");
+    let manifest = log
+        .latest_unreverted_snapshot()
+        .unwrap()
+        .expect("a snapshot to undo");
+    kintsugi_core::restore_snapshot(&snapshot_dir, &manifest).unwrap();
+    assert_eq!(
+        std::fs::read(&victim).unwrap(),
+        b"original",
+        "undo recovered the human's deleted file"
+    );
+}
+
+#[test]
 fn recorded_and_proposed_events_share_one_intact_chain() {
     let mut h = start(2);
 

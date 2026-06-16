@@ -529,12 +529,13 @@ impl Daemon {
         Ok(())
     }
 
-    /// Record a shell command a human already ran (passive session recording,
-    /// no AI-agent hook). Logged as `agent = "shell"`, decision Allow — it has
-    /// already run, so this never blocks or snapshots. We still **classify** it
-    /// with the Tier-1 rules so the recorded event carries the real class: a
-    /// destructive command a DBA ran shows up flagged in the audit timeline and
-    /// in `kintsugi report --destructive`. The model never runs on this path.
+    /// Record a shell command from a human shell session (passive recording, no
+    /// AI-agent hook). Logged as `agent = "shell"`, decision Allow — it is never
+    /// blocked (the recorder is an audit/undo trail, not a gate). We **classify**
+    /// it with the Tier-1 rules so the event carries the real class (a destructive
+    /// command a DBA ran is flagged in the timeline and `kintsugi report`), and we
+    /// **snapshot destructive commands** so `kintsugi undo` can recover a human's
+    /// mistake. The model never runs on this path.
     ///
     /// The hard floor stays honest: this is an audit record of the past, not a
     /// gate. The "nothing un-warned" guarantee never applied to commands a human
@@ -554,7 +555,16 @@ impl Daemon {
         // recording a Hold/Deny here would be a lie about what happened. The
         // class still rides along (verdict.class) so the timeline flags danger.
         let verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
-        self.log.log_event(&cmd, &verdict, None)?;
+        // Recoverer: snapshot the paths a *destructive* human command will touch,
+        // so `kintsugi undo` can roll back a person's mistake (rm -rf, DROP, force
+        // delete) the same way it rolls back an agent's. The shell preexec hook
+        // fires before the command runs, so this is a just-in-time capture;
+        // `maybe_snapshot` no-ops for Safe commands and reflinks where it can, so
+        // the common case stays cheap. Best-effort: if the snapshot loses the race
+        // (or the fs can't reflink), the filesystem-watcher backstop still records
+        // the change. The honest guarantee is "recoverable", not transactional.
+        let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
+        self.log.log_event(&cmd, &verdict, snapshot_id.as_deref())?;
         Ok(())
     }
 
