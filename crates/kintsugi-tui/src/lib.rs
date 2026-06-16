@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod splash;
 pub mod ui;
 
 use std::path::Path;
@@ -18,19 +19,22 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyEventKind};
 use kintsugi_core::EventLog;
 
-pub use app::{Action, App, Mode};
+pub use app::{Action, App, Mode, Screen};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// How many recent events to show, and how often to poll for new ones.
 const TAIL: usize = 500;
 const POLL: Duration = Duration::from_millis(250);
+/// Frame cadence while the launch splash animates (≈60ms → ~1.8s total).
+const SPLASH_TICK: Duration = Duration::from_millis(60);
 
 /// Run the TUI against the event log at `db_path`, with snapshots under
 /// `snapshot_dir` (for undo). Restores the terminal on any exit path.
 pub fn run(db_path: &Path, snapshot_dir: &Path) -> Result<()> {
     let color = std::env::var_os("NO_COLOR").is_none();
     let mut app = App::new(color);
+    app.start_on_splash();
     reload(&mut app, db_path);
 
     let mut terminal = ratatui::init(); // installs the panic-safe teardown hook
@@ -51,8 +55,15 @@ fn event_loop(
         app.page_rows = (terminal.size()?.height as usize).saturating_sub(6).max(1);
         terminal.draw(|f| ui::render(f, app))?;
 
-        // Poll so the loop stays responsive and refreshes live data on idle ticks.
-        if event::poll(POLL)? {
+        // The splash runs on a fast cadence so the animation is smooth; the live
+        // app polls slower and refreshes data on idle ticks.
+        let tick = if app.screen == Screen::Splash {
+            SPLASH_TICK
+        } else {
+            POLL
+        };
+
+        if event::poll(tick)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match app.on_key(key.code) {
                     Action::Quit => break,
@@ -64,6 +75,8 @@ fn event_loop(
                 Event::Resize(_, _) => { /* redrawn next iteration */ }
                 _ => {}
             }
+        } else if app.screen == Screen::Splash {
+            app.tick_splash();
         } else {
             reload(app, db_path);
         }
