@@ -16,18 +16,6 @@ rust-version.workspace = true
 name = "kintsugi_intercept"
 path = "src/lib.rs"
 
-[[bin]]
-name = "kintsugi-shim"
-path = "src/bin/shim.rs"
-
-[[bin]]
-name = "kintsugi-hook"
-path = "src/bin/hook.rs"
-
-[[bin]]
-name = "kintsugi-mcp"
-path = "src/bin/mcp.rs"
-
 [dependencies]
 kintsugi-core.workspace = true
 kintsugi-daemon.workspace = true
