@@ -246,7 +246,10 @@ mod tests {
     }
 
     // These tests mutate process-global env (XDG_CONFIG_HOME / HOME / KINTSUGI_VAULT)
-    // so they must not run concurrently with each other.
+    // so they must not run concurrently with each other. Only the Linux
+    // install round-trip uses it, so it's Linux-gated to stay dead-code-free on
+    // macOS/Windows under `-D warnings`.
+    #[cfg(target_os = "linux")]
     fn serial() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
