@@ -13,7 +13,7 @@ use ratatui::widgets::{
 };
 use time::macros::format_description;
 
-use crate::app::{outcome_word, App, Mode, Tab, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::{outcome_word, App, Mode, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
 
 const ACCENT: Color = Color::Yellow; // the one reserved accent (held / ambiguous)
 const DANGER: Color = Color::Red; // denied / catastrophic
@@ -24,6 +24,11 @@ const SPLIT_WIDTH: u16 = 100;
 /// Render the whole UI for the current frame.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
+    // The splash owns the whole screen and renders at any size.
+    if app.screen == Screen::Splash {
+        crate::splash::render(f, area, app.splash_frame, app.color);
+        return;
+    }
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         render_too_small(f, area);
         return;

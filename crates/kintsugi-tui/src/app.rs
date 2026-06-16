@@ -188,6 +188,16 @@ impl Tab {
     }
 }
 
+/// The top-level screen: the launch animation, then the live application. Login
+/// and settings screens are layered on in later stages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    /// The animated launch logo (auto-advances; any key skips it).
+    Splash,
+    /// The live application (tabs, timeline, detail, …).
+    Main,
+}
+
 /// A side-effecting action the event loop must perform (kept out of pure state).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -223,6 +233,10 @@ pub struct App {
     pub daemon_up: bool,
     /// The active Tier-2 scorer backend id, if the daemon reported one.
     pub scorer: Option<String>,
+    /// The current top-level screen (splash → main).
+    pub screen: Screen,
+    /// Animation frame for the launch splash (advanced by the event loop).
+    pub splash_frame: usize,
 }
 
 impl App {
@@ -238,7 +252,36 @@ impl App {
             tab: Tab::Timeline,
             daemon_up: false,
             scorer: None,
+            // Default to the live app; `run()` opts into the splash at startup, so
+            // unit tests exercise the app directly without animating through it.
+            screen: Screen::Main,
+            splash_frame: 0,
         }
+    }
+
+    /// Begin on the animated launch splash (used by `run()` at startup).
+    pub fn start_on_splash(&mut self) {
+        self.screen = Screen::Splash;
+        self.splash_frame = 0;
+    }
+
+    /// Advance the splash animation one tick; once it completes, enter the app.
+    /// Returns true while the splash is still showing (so the loop keeps the
+    /// fast animation cadence).
+    pub fn tick_splash(&mut self) -> bool {
+        if self.screen != Screen::Splash {
+            return false;
+        }
+        self.splash_frame += 1;
+        if self.splash_frame >= crate::splash::FRAMES {
+            self.enter_main();
+        }
+        self.screen == Screen::Splash
+    }
+
+    /// Leave the splash and show the application.
+    fn enter_main(&mut self) {
+        self.screen = Screen::Main;
     }
 
     /// Counts for the header vitals strip: (total, held, catastrophic) over the
@@ -316,6 +359,14 @@ impl App {
 
     /// Handle a keypress, returning any side-effecting action for the loop.
     pub fn on_key(&mut self, key: KeyCode) -> Action {
+        // On the splash, any key except quit skips straight into the app.
+        if self.screen == Screen::Splash {
+            if matches!(key, KeyCode::Char('q') | KeyCode::Esc) {
+                return Action::Quit;
+            }
+            self.enter_main();
+            return Action::None;
+        }
         // A keypress dismisses a transient status message.
         self.status = None;
         match self.mode {
@@ -669,6 +720,28 @@ mod tests {
         app.on_key(KeyCode::Char('3')); // Recorder (empty slice)
         assert_eq!(app.visible().len(), 0);
         assert_eq!(app.vitals(), (3, 2, 1)); // total, held, catastrophic
+    }
+
+    #[test]
+    fn splash_ticks_to_main_and_any_key_skips_it() {
+        let mut app = App::new(false);
+        app.start_on_splash();
+        assert_eq!(app.screen, Screen::Splash);
+        // Ticking eventually completes the animation and enters the app.
+        for _ in 0..crate::splash::FRAMES {
+            app.tick_splash();
+        }
+        assert_eq!(app.screen, Screen::Main);
+
+        // From the splash, a non-quit key skips straight in; quit still quits.
+        let mut app = App::new(false);
+        app.start_on_splash();
+        assert_eq!(app.on_key(KeyCode::Char('j')), Action::None);
+        assert_eq!(app.screen, Screen::Main);
+
+        let mut app = App::new(false);
+        app.start_on_splash();
+        assert_eq!(app.on_key(KeyCode::Char('q')), Action::Quit);
     }
 
     #[test]
