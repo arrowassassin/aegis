@@ -37,6 +37,10 @@ pub fn render(f: &mut Frame, app: &App) {
         render_too_small(f, area);
         return;
     }
+    if app.screen == Screen::Settings {
+        render_settings(f, app, area);
+        return;
+    }
 
     let rows = Layout::vertical([
         Constraint::Length(1), // header
@@ -74,6 +78,79 @@ fn accent_fg(app: &App, c: Color) -> Style {
         Style::default().fg(c)
     } else {
         Style::default()
+    }
+}
+
+/// The settings control panel: the locked settings as a selectable list, each a
+/// label + current value, with a save/result line. Read-only when unprovisioned.
+fn render_settings(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::SettingRow;
+    let rows = Layout::vertical([
+        Constraint::Length(1), // header
+        Constraint::Min(1),    // body
+        Constraint::Length(2), // footer
+    ])
+    .split(area);
+
+    // Header.
+    let editable = app.settings_editable();
+    let lock = if editable {
+        "unlocked for this session"
+    } else {
+        "read-only (not provisioned)"
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("▦ Kintsugi", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("  settings", dim(app)),
+        ])),
+        rows[0],
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(lock, dim(app))).right_aligned()),
+        rows[0],
+    );
+
+    // Body: the settings table.
+    let default = kintsugi_core::admin::LockedSettings::default();
+    let s = app.settings.as_ref().unwrap_or(&default);
+    let table_rows = SettingRow::ALL.iter().enumerate().map(|(i, row)| {
+        let selected = i == app.settings_selected;
+        let marker = if selected { "› " } else { "  " };
+        let val = row.value(s);
+        // The danger accent is reserved: only fail-closed "on" and the value of
+        // require-password-to-stop "off" (a loosening) warrant attention; here we
+        // keep it calm and use the accent for the *on* booleans.
+        let val_style = accent_fg(app, ACCENT);
+        Row::new(vec![
+            Cell::from(format!("{marker}{}", row.label())),
+            Cell::from(Span::styled(val, val_style)),
+        ])
+    });
+    let table = Table::new(table_rows, [Constraint::Length(28), Constraint::Min(10)])
+        .block(panel(app, " locked settings "));
+    f.render_widget(table, rows[1]);
+
+    // Footer: help + transient status.
+    let foot = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(rows[2]);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "j/k move · enter/space toggle · esc back",
+            dim(app),
+        ))),
+        foot[0],
+    );
+    if let Some(status) = &app.settings_status {
+        let danger = status.starts_with("could not") || status.contains("read-only");
+        let style = if danger {
+            accent_fg(app, DANGER)
+        } else {
+            accent_fg(app, OKGREEN)
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(status.clone(), style))),
+            foot[1],
+        );
     }
 }
 
@@ -445,7 +522,7 @@ fn gauge_rect(area: Rect) -> Rect {
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
-    let help = "j/k move · tab views · enter detail · a/d resolve · u undo · / filter · q quit";
+    let help = "j/k move · tab · detail · a/d resolve · u undo · s settings · / filter · q quit";
     // Right-aligned "row N/M" indicator so paging has a frame of reference — but
     // only when it fits without crowding the help (narrow terminals show help alone).
     let total = app.visible().len();
@@ -632,6 +709,19 @@ mod tests {
         assert!(wide.contains("risk"));
         let narrow = buffer_text(&app, 80, 24); // list only
         assert!(narrow.contains("held"));
+    }
+
+    #[test]
+    fn settings_screen_lists_rows_and_values() {
+        let mut app = App::new(false);
+        app.open_settings(); // read-only defaults (no vault)
+        let text = buffer_text(&app, 80, 24);
+        assert!(text.contains("locked settings"));
+        assert!(text.contains("recording"));
+        assert!(text.contains("enforcement"));
+        assert!(text.contains("attended"));
+        assert!(text.contains("read-only"));
+        assert!(text.contains("esc back"));
     }
 
     #[test]
