@@ -29,6 +29,14 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   is `kintsugi-mcp` (was briefly `kintsugi-exec`), matching the release archive,
   the installer, `kintsugi init` wiring, and the plugin config — fixes
   "binary kintsugi-mcp missing from archive" on install.
+- **Fix: installer built the wrong crate for the model.** After the binary
+  consolidation, `install.sh` still rebuilt `kintsugi-daemon` (now a library-only
+  crate) for the llama engine and built `kintsugi-cli`/`kintsugi-intercept` from
+  source — so the model engine was never produced and the daemon stayed
+  heuristic. The installer now builds the `kintsugi` crate (`--bin kintsugi-daemon
+  --features llama` for the engine; the whole crate for a source install). The
+  `kintsugi` crate gained `llama`/`download` features that forward to
+  `kintsugi-model`.
 
 ### Enterprise TUI overhaul + brand (phase A4)
 - **Tabbed views** — `Timeline` (everything), `Audit` (destructive-only lens), and

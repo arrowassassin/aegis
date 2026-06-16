@@ -12,6 +12,14 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+# The daemon binary lives in this crate, so the inference engine is enabled here
+# (forwarded to kintsugi-model). `kintsugi model install` / the installer build
+# `kintsugi --bin kintsugi-daemon --features llama` to get a model-capable daemon.
+[features]
+default = []
+llama = ["kintsugi-model/llama"]
+download = ["kintsugi-model/download"]
+
 [[bin]]
 name = "kintsugi"
 path = "src/main.rs"
