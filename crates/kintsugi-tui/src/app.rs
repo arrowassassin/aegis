@@ -197,6 +197,77 @@ pub enum Screen {
     Login,
     /// The live application (tabs, timeline, detail, …).
     Main,
+    /// The settings control panel (view + toggle the locked settings).
+    Settings,
+}
+
+/// The toggleable locked settings, in display order. Booleans flip; `Enforcement`
+/// cycles. Every row is a *tightening* control — there is no row that loosens the
+/// catastrophic floor (spine #1/#2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingRow {
+    Recording,
+    Autostart,
+    RequirePasswordToStop,
+    FailClosed,
+    Enforcement,
+}
+
+impl SettingRow {
+    pub const ALL: [SettingRow; 5] = [
+        SettingRow::Recording,
+        SettingRow::Autostart,
+        SettingRow::RequirePasswordToStop,
+        SettingRow::FailClosed,
+        SettingRow::Enforcement,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingRow::Recording => "recording",
+            SettingRow::Autostart => "autostart",
+            SettingRow::RequirePasswordToStop => "require-password-to-stop",
+            SettingRow::FailClosed => "fail-closed",
+            SettingRow::Enforcement => "enforcement",
+        }
+    }
+
+    /// The current value of this row, as display text.
+    pub fn value(self, s: &kintsugi_core::admin::LockedSettings) -> String {
+        use kintsugi_core::admin::Enforcement;
+        let yn = |b: bool| if b { "on" } else { "off" }.to_string();
+        match self {
+            SettingRow::Recording => yn(s.recording),
+            SettingRow::Autostart => yn(s.autostart),
+            SettingRow::RequirePasswordToStop => yn(s.require_password_to_stop),
+            SettingRow::FailClosed => yn(s.fail_closed),
+            SettingRow::Enforcement => match s.enforcement {
+                Enforcement::Attended => "attended".into(),
+                Enforcement::Unattended => "unattended".into(),
+                Enforcement::Notify => "notify".into(),
+            },
+        }
+    }
+
+    /// Apply this row's toggle to the settings in place.
+    fn apply(self, s: &mut kintsugi_core::admin::LockedSettings) {
+        use kintsugi_core::admin::Enforcement;
+        match self {
+            SettingRow::Recording => s.recording = !s.recording,
+            SettingRow::Autostart => s.autostart = !s.autostart,
+            SettingRow::RequirePasswordToStop => {
+                s.require_password_to_stop = !s.require_password_to_stop
+            }
+            SettingRow::FailClosed => s.fail_closed = !s.fail_closed,
+            SettingRow::Enforcement => {
+                s.enforcement = match s.enforcement {
+                    Enforcement::Attended => Enforcement::Unattended,
+                    Enforcement::Unattended => Enforcement::Notify,
+                    Enforcement::Notify => Enforcement::Attended,
+                }
+            }
+        }
+    }
 }
 
 /// A side-effecting action the event loop must perform (kept out of pure state).
@@ -249,6 +320,12 @@ pub struct App {
     /// The verified admin password, held for the session so settings changes can
     /// re-seal the vault without re-prompting. Zeroized on drop.
     pub(crate) password: Option<zeroize::Zeroizing<String>>,
+    /// The decrypted locked settings (populated on entering the Settings screen).
+    pub settings: Option<kintsugi_core::admin::LockedSettings>,
+    /// Selection index on the Settings screen.
+    pub settings_selected: usize,
+    /// Transient result/error line on the Settings screen.
+    pub settings_status: Option<String>,
 }
 
 impl App {
@@ -273,6 +350,72 @@ impl App {
             login_input: String::new(),
             login_error: None,
             password: None,
+            settings: None,
+            settings_selected: 0,
+            settings_status: None,
+        }
+    }
+
+    /// Whether locked settings can be edited (provisioned + authenticated).
+    pub fn settings_editable(&self) -> bool {
+        self.vault.is_some() && self.password.is_some()
+    }
+
+    /// Open the Settings control panel. Decrypts the live settings when we can;
+    /// otherwise falls back to defaults shown read-only (unprovisioned host).
+    pub fn open_settings(&mut self) {
+        if self.settings.is_none() {
+            self.settings = match (&self.vault, &self.password) {
+                (Some(v), Some(pw)) => v.unseal(pw).ok(),
+                _ => None,
+            };
+        }
+        if self.settings.is_none() {
+            self.settings = Some(kintsugi_core::admin::LockedSettings::default());
+        }
+        self.settings_selected = 0;
+        self.settings_status = None;
+        self.screen = Screen::Settings;
+    }
+
+    /// Toggle the selected setting and re-seal the vault. Read-only when the host
+    /// isn't provisioned/authenticated (then it only explains, never pretends).
+    pub fn toggle_selected_setting(&mut self) {
+        let Some(row) = SettingRow::ALL.get(self.settings_selected).copied() else {
+            return;
+        };
+        if !self.settings_editable() {
+            self.settings_status =
+                Some("read-only — provision with `kintsugi admin provision` first".into());
+            return;
+        }
+        let (Some(settings), Some(vault), Some(pw)) =
+            (self.settings.as_mut(), &self.vault, &self.password)
+        else {
+            return;
+        };
+        row.apply(settings);
+        // Re-seal under the held password and persist atomically.
+        match vault.update_settings(pw, settings) {
+            Ok(new_vault) => {
+                let path = kintsugi_core::admin::default_vault_path();
+                match kintsugi_core::admin::save_vault(&path, &new_vault) {
+                    Ok(()) => {
+                        self.vault = Some(new_vault);
+                        self.settings_status =
+                            Some(format!("saved · {} = {}", row.label(), row.value(settings)));
+                    }
+                    Err(e) => {
+                        // Roll back the in-memory toggle so the screen matches disk.
+                        row.apply(settings);
+                        self.settings_status = Some(format!("could not save: {e}"));
+                    }
+                }
+            }
+            Err(e) => {
+                row.apply(settings);
+                self.settings_status = Some(format!("could not re-seal: {e}"));
+            }
         }
     }
 
@@ -427,6 +570,9 @@ impl App {
         if self.screen == Screen::Login {
             return self.on_key_login(key);
         }
+        if self.screen == Screen::Settings {
+            return self.on_key_settings(key);
+        }
         // A keypress dismisses a transient status message.
         self.status = None;
         match self.mode {
@@ -434,6 +580,28 @@ impl App {
             Mode::Filter => self.on_key_filter(key),
             Mode::Detail => self.on_key_detail(key),
         }
+    }
+
+    /// Settings screen: j/k move, enter/space toggle, esc/q back to the app.
+    fn on_key_settings(&mut self, key: KeyCode) -> Action {
+        match key {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
+                self.screen = Screen::Main;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.settings_selected + 1 < SettingRow::ALL.len() {
+                    self.settings_selected += 1;
+                }
+                self.settings_status = None;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.settings_selected = self.settings_selected.saturating_sub(1);
+                self.settings_status = None;
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => self.toggle_selected_setting(),
+            _ => {}
+        }
+        Action::None
     }
 
     /// Login screen: type the password, Enter submits, Esc quits (no bypass).
@@ -480,6 +648,7 @@ impl App {
             KeyCode::Char('u') => return Action::Undo,
             KeyCode::Char('a') => return self.resolve_selected(true),
             KeyCode::Char('d') => return self.resolve_selected(false),
+            KeyCode::Char('s') => self.open_settings(),
             _ => {}
         }
         Action::None
@@ -860,6 +1029,68 @@ mod tests {
         app2.start_on_splash();
         app2.on_key(KeyCode::Char(' '));
         assert_eq!(app2.on_key(KeyCode::Esc), Action::Quit);
+    }
+
+    #[test]
+    fn settings_screen_toggles_persist_to_the_sealed_vault() {
+        // Isolate the vault on disk so the toggle's save round-trips.
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().join("vault.json");
+        std::env::set_var("KINTSUGI_VAULT", &vault_path);
+
+        let prov = kintsugi_core::admin::provision(
+            "correct horse battery",
+            &kintsugi_core::admin::LockedSettings::default(),
+        )
+        .unwrap();
+        kintsugi_core::admin::save_vault(&vault_path, &prov.vault).unwrap();
+
+        let mut app = App::new(false);
+        app.set_vault(Some(prov.vault));
+        // Authenticate (so the password is held for re-sealing).
+        app.start_on_splash();
+        app.on_key(KeyCode::Char(' ')); // skip splash → Login
+        for c in "correct horse battery".chars() {
+            app.on_key(KeyCode::Char(c));
+        }
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.screen, Screen::Main);
+
+        // Open settings, move to "recording" (row 0), and toggle it off.
+        app.on_key(KeyCode::Char('s'));
+        assert_eq!(app.screen, Screen::Settings);
+        assert!(app.settings_editable());
+        assert!(app.settings.as_ref().unwrap().recording);
+        app.on_key(KeyCode::Enter); // toggle recording
+        assert!(!app.settings.as_ref().unwrap().recording);
+        assert!(app.settings_status.as_deref().unwrap().contains("saved"));
+
+        // The change is durable: re-load the vault from disk and unseal it.
+        let reloaded = match kintsugi_core::admin::load_vault(&vault_path) {
+            kintsugi_core::admin::VaultState::Locked(v) => *v,
+            _ => panic!("vault should be locked"),
+        };
+        let s = reloaded.unseal("correct horse battery").unwrap();
+        assert!(!s.recording, "toggle must persist to disk");
+
+        std::env::remove_var("KINTSUGI_VAULT");
+    }
+
+    #[test]
+    fn settings_are_read_only_without_a_vault() {
+        let mut app = App::new(false);
+        app.open_settings();
+        assert_eq!(app.screen, Screen::Settings);
+        assert!(!app.settings_editable());
+        // Toggling explains rather than pretending to change anything.
+        let before = app.settings.clone();
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.settings, before);
+        assert!(app
+            .settings_status
+            .as_deref()
+            .unwrap()
+            .contains("read-only"));
     }
 
     #[test]
