@@ -4,6 +4,7 @@
 //! daemon), `status`, and `log` (the recent timeline). Approval/undo arrive in
 //! later phases.
 
+mod admin_cmd;
 mod init;
 mod logview;
 
@@ -39,6 +40,11 @@ enum Command {
     Status,
     /// Stop the background daemon (the inverse of `kintsugi init`).
     Stop,
+    /// Admin-lock settings behind a password (provision / status / change-password).
+    Admin {
+        #[command(subcommand)]
+        cmd: AdminCmd,
+    },
     /// Check GitHub for a newer release and install it in place. A manual,
     /// user-invoked check that sends no data — only fetches the latest release
     /// tag and (with consent) the verified installer. There are no automatic or
@@ -137,6 +143,25 @@ enum Command {
     Panic,
     /// Clear the kill-switch and resume normal operation.
     Resume,
+}
+
+/// `kintsugi admin` subcommands.
+#[derive(Debug, Subcommand)]
+enum AdminCmd {
+    /// Set the admin password and lock settings (stopping Kintsugi then needs it).
+    Provision {
+        /// Read the password from a file instead of prompting (for config
+        /// management / unattended provisioning).
+        #[arg(long)]
+        password_file: Option<std::path::PathBuf>,
+        /// Re-provision even if already locked (rotates password + recovery key).
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show whether settings are admin-locked.
+    Status,
+    /// Change the admin password (and rotate the recovery key).
+    ChangePassword,
 }
 
 /// Shared filter flags for `log`, `redact`, and `purge`.
@@ -255,6 +280,14 @@ fn main() -> Result<()> {
         }
         Some(Command::Status) => cmd_status(),
         Some(Command::Stop) => cmd_stop(),
+        Some(Command::Admin { cmd }) => match cmd {
+            AdminCmd::Provision {
+                password_file,
+                force,
+            } => admin_cmd::provision(password_file, force),
+            AdminCmd::Status => admin_cmd::status(),
+            AdminCmd::ChangePassword => admin_cmd::change_password(),
+        },
         Some(Command::Update { check, yes }) => cmd_update(check, yes),
         Some(Command::Log {
             number,
@@ -900,6 +933,10 @@ fn cmd_banner() -> Result<()> {
 }
 
 fn cmd_stop() -> Result<()> {
+    // When settings are admin-locked, stopping requires the admin password.
+    if !admin_cmd::allow_stop() {
+        return Ok(());
+    }
     let running = Client::is_daemon_running();
     let pid_path = kintsugi_daemon::pid_file_path();
     let pid = std::fs::read_to_string(&pid_path)
