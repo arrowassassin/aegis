@@ -51,14 +51,21 @@ impl LlamaScorer {
         if let Some(p) = std::env::var_os("KINTSUGI_MODEL_FILE") {
             let path = std::path::PathBuf::from(p);
             if path.is_file() {
-                let id = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("custom");
-                return Self::load(&path, id);
+                return Self::load(&path, &model_id(&path));
             }
             anyhow::bail!(
                 "KINTSUGI_MODEL_FILE is set but not a readable file: {}",
+                path.display()
+            );
+        }
+        // Then the persisted selection (`kintsugi model use`), so the daemon loads
+        // the chosen GGUF across restarts without a shell env var.
+        if let Some(path) = crate::config::configured_model() {
+            if path.is_file() {
+                return Self::load(&path, &model_id(&path));
+            }
+            anyhow::bail!(
+                "the configured model file is missing (run `kintsugi model use <path>`): {}",
                 path.display()
             );
         }
@@ -150,6 +157,14 @@ impl Scorer for LlamaScorer {
             None => self.fallback.score(cmd, class, rule),
         }
     }
+}
+
+/// A short, stable id for a bring-your-own GGUF — its file stem, or `custom`.
+fn model_id(path: &std::path::Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("custom")
+        .to_string()
 }
 
 fn weights_dir() -> PathBuf {

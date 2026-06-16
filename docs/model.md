@@ -23,6 +23,28 @@ can't load, Kintsugi keeps working with rules + heuristic scoring.
 > ship the default (heuristic) build — small, offline, no weights. The GGUF model
 > is strictly opt-in (below).
 
+## Managing the model: `kintsugi model`
+
+One command manages the whole model lifecycle. The chosen GGUF is persisted to a
+small file in the data dir (`model.path`), so the daemon loads it across restarts
+**without** depending on a shell env var — and `kintsugi model use`/`pick`/`remove`
+restart a running daemon so the change takes effect immediately.
+
+| command | what it does |
+|---------|--------------|
+| `kintsugi model status`  | what's configured, whether this daemon has the inference engine, and what it's scoring with right now — so a "model set but still heuristic" mismatch is diagnosable in one place |
+| `kintsugi model use <path>` | point the daemon at any local GGUF and reload — swap models anytime, no Kintsugi update, no recompile |
+| `kintsugi model pick`    | download/choose a GGUF from Hugging Face (the picker), then load it |
+| `kintsugi model install` | build the in-process llama engine (needs a C/C++ toolchain) **and** download a model — the one-step path for `cargo install` users |
+| `kintsugi model remove`  | forget the model; fall back to the always-on heuristic scorer |
+
+`kintsugi model status` is the first thing to run when a downloaded model "isn't
+working": the most common cause is a daemon built **without** the inference engine
+(a plain `cargo install`), which can't load any GGUF until you run
+`kintsugi model install`. Precedence when the daemon loads: `KINTSUGI_MODEL_FILE`
+(env) first, then the persisted `kintsugi model use` selection, then the pinned
+default.
+
 ## Model
 
 | tier | model | size (Q4_K_M) | when |

@@ -406,3 +406,14 @@ the locked product decisions this build implements.
   version dance awkward; the AEAD-tag-as-MAC is a standard construction we already
   ship). Every shutdown attempt — success or failure — is a hash-chained audit
   event. The CLI gate remains only for the daemon-unreachable fallback.
+- Model management: `kintsugi model` persists the chosen GGUF path to `model.path`
+  in the data dir, and `LlamaScorer::autoload` reads it after the
+  `KINTSUGI_MODEL_FILE` env override. This decouples model selection from a shell
+  env var (the daemon is a background process that wouldn't reliably inherit one)
+  and from Kintsugi releases — any local GGUF works without a recompile. The
+  config module lives in `kintsugi-model` (always compiled, not behind `llama`) so
+  the CLI can manage a selection even when the installed daemon has no engine.
+  `pick`/`install` reuse the existing `pick-model.sh`/`install.sh` rather than
+  reimplementing the HF picker + engine build in Rust. The MCP server binary is
+  named `kintsugi-mcp` everywhere (the consolidation's transient `kintsugi-exec`
+  name broke the release archive lookup).

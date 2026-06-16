@@ -1,6 +1,6 @@
 [package]
 name = "kintsugi"
-description = "Kintsugi — a local-first safety layer for AI coding agents. Installs all binaries: kintsugi, kintsugi-daemon, kintsugi-hook, kintsugi-shim, kintsugi-exec."
+description = "Kintsugi — a local-first safety layer for AI coding agents. Installs all binaries: kintsugi, kintsugi-daemon, kintsugi-hook, kintsugi-shim, kintsugi-mcp."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,8 +29,8 @@ name = "kintsugi-shim"
 path = "src/bin/kintsugi-shim.rs"
 
 [[bin]]
-name = "kintsugi-exec"
-path = "src/bin/kintsugi-exec.rs"
+name = "kintsugi-mcp"
+path = "src/bin/kintsugi-mcp.rs"
 
 [dependencies]
 kintsugi-core.workspace = true

@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1661,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-daemon"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "directories",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-intercept"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "interprocess",
@@ -1696,9 +1696,10 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-model"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
+ "directories",
  "hex",
  "kintsugi-core",
  "llama-cpp-2",
@@ -1711,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-tui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "crossterm",

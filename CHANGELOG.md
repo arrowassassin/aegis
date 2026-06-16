@@ -13,6 +13,23 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### `kintsugi model` — manage the local model from the CLI
+- **New command** `kintsugi model status | use <path> | pick | install | remove`.
+  `use` points the daemon at any local GGUF (swap models anytime, no Kintsugi
+  update); `install` builds the inference engine **and** downloads a model in one
+  step — the path `cargo install` users take; `status` diagnoses the common
+  "model set but still heuristic" mismatch (a daemon built without the engine).
+- **Persisted selection.** The chosen model path is written to `model.path` in the
+  data dir, and the daemon's `LlamaScorer::autoload` reads it after the
+  `KINTSUGI_MODEL_FILE` env override — so a downloaded model now takes effect
+  across restarts **without** depending on a shell env var (the bug where a model
+  set up by the installer didn't load on `kintsugi init`). `model use`/`pick`/
+  `remove` restart a running daemon so the change applies immediately.
+- **Fix: MCP binary name.** The consolidated `kintsugi` crate's MCP server binary
+  is `kintsugi-mcp` (was briefly `kintsugi-exec`), matching the release archive,
+  the installer, `kintsugi init` wiring, and the plugin config — fixes
+  "binary kintsugi-mcp missing from archive" on install.
+
 ### Enterprise TUI overhaul + brand (phase A4)
 - **Tabbed views** — `Timeline` (everything), `Audit` (destructive-only lens), and
   `Recorder` (passively-recorded human shell sessions), switched with `Tab`/`1`/`2`/`3`;
