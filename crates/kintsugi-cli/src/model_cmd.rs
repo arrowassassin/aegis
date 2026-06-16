@@ -43,6 +43,11 @@ pub fn status() -> Result<()> {
                 println!(
                     "              ⚠ file is missing — set it again: kintsugi model use <path>"
                 );
+            } else if !looks_like_gguf(&path) {
+                println!(
+                    "              ⚠ file is not a valid GGUF (truncated or half-downloaded) —"
+                );
+                println!("                re-download it: kintsugi model pick");
             }
         }
         None => println!("  configured: none — using the heuristic scorer"),
@@ -88,6 +93,14 @@ pub fn use_model(path: &Path) -> Result<()> {
         eprintln!(
             "kintsugi: warning — {} is not a .gguf file; the model may fail to load.",
             path.display()
+        );
+    } else if !looks_like_gguf(path) {
+        eprintln!(
+            "kintsugi: warning — {} doesn't start with the GGUF header; it looks truncated or",
+            path.display()
+        );
+        eprintln!(
+            "  corrupt and will likely fail to load. Re-download it with: kintsugi model pick"
         );
     }
     // Persist an absolute path: the daemon runs from a different working directory,
@@ -252,6 +265,20 @@ fn newest_gguf(dir: &Path) -> Option<PathBuf> {
     newest.map(|(_, p)| p)
 }
 
+/// A real GGUF file starts with the four ASCII bytes `GGUF`. A file that exists
+/// but fails this is truncated, half-downloaded, or not a model at all — exactly
+/// the case that makes the daemon load fail and silently drop to the heuristic
+/// scorer. This is a cheap header check, not a full validation. `false` for a
+/// missing/unreadable file too (callers report those separately).
+fn looks_like_gguf(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).is_ok() && &magic == b"GGUF"
+}
+
 // Re-export the daemon probes from `main` so this module reads cleanly.
 use crate::{active_scorer_label, daemon_has_llama};
 
@@ -284,6 +311,28 @@ mod tests {
         let new = d.join("new.gguf");
         touch(&new);
         assert_eq!(newest_gguf(d), Some(new));
+    }
+
+    #[test]
+    fn looks_like_gguf_detects_magic_and_corruption() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A real GGUF starts with the "GGUF" magic.
+        let good = tmp.path().join("good.gguf");
+        std::fs::write(&good, b"GGUF\x03\x00\x00\x00rest-of-header").unwrap();
+        assert!(looks_like_gguf(&good));
+
+        // A truncated / half-downloaded file (no magic, or too short) is rejected.
+        let truncated = tmp.path().join("truncated.gguf");
+        std::fs::write(&truncated, b"GG").unwrap();
+        assert!(!looks_like_gguf(&truncated));
+
+        // An HTML error page saved as .gguf is rejected.
+        let html = tmp.path().join("oops.gguf");
+        std::fs::write(&html, b"<!DOCTYPE html><html>404</html>").unwrap();
+        assert!(!looks_like_gguf(&html));
+
+        // A missing file is rejected (not a panic).
+        assert!(!looks_like_gguf(&tmp.path().join("nope.gguf")));
     }
 
     #[test]

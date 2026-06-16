@@ -119,13 +119,15 @@ run_with_progress() {
 }
 
 install_from_source() {
-  have cargo || die "no prebuilt build for your platform and cargo is not installed.\n  Install Rust (https://rustup.rs) then re-run, or: cargo install --git https://github.com/$REPO kintsugi-cli kintsugi-daemon kintsugi-intercept"
+  have cargo || die "no prebuilt build for your platform and cargo is not installed.\n  Install Rust (https://rustup.rs) then re-run, or: cargo install --git https://github.com/$REPO kintsugi"
+  # The single `kintsugi` crate builds all binaries (kintsugi, kintsugi-daemon,
+  # kintsugi-hook, kintsugi-shim, kintsugi-mcp).
   if [ -n "$VERSION" ]; then
     run_with_progress "building Kintsugi from source (a few minutes)" \
-      cargo install --git "https://github.com/$REPO" kintsugi-cli kintsugi-daemon kintsugi-intercept --tag "$VERSION" || die "source build failed (see output above)"
+      cargo install --git "https://github.com/$REPO" kintsugi --tag "$VERSION" || die "source build failed (see output above)"
   else
     run_with_progress "building Kintsugi from source (a few minutes)" \
-      cargo install --git "https://github.com/$REPO" kintsugi-cli kintsugi-daemon kintsugi-intercept || die "source build failed (see output above)"
+      cargo install --git "https://github.com/$REPO" kintsugi || die "source build failed (see output above)"
   fi
   say "installed to $HOME/.cargo/bin"
   [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  kintsugi stop && kintsugi init"; return; }
@@ -239,14 +241,16 @@ setup_model() {
     ensure_cargo       || { warn "cargo unavailable; skipping the model build."; return 0; }
 
     ok=1
+    # The daemon binary lives in the `kintsugi` crate now; build just that bin
+    # with the llama engine and install it over the prebuilt heuristic daemon.
     if [ -n "$VERSION" ]; then
       run_with_progress "compiling the llama.cpp engine (a few minutes)" \
-        cargo install --git "https://github.com/$REPO" kintsugi-daemon \
-          --features "kintsugi-model/llama" --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
+        cargo install --git "https://github.com/$REPO" kintsugi --bin kintsugi-daemon \
+          --features llama --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
     else
       run_with_progress "compiling the llama.cpp engine (a few minutes)" \
-        cargo install --git "https://github.com/$REPO" kintsugi-daemon \
-          --features "kintsugi-model/llama" --root "$(dirname "$dir")" --force || ok=0
+        cargo install --git "https://github.com/$REPO" kintsugi --bin kintsugi-daemon \
+          --features llama --root "$(dirname "$dir")" --force || ok=0
     fi
     [ "$ok" -eq 1 ] || { warn "model engine build failed; Kintsugi keeps working on the heuristic scorer."; return 0; }
   fi

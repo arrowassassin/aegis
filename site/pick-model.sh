@@ -72,6 +72,34 @@ sha256() {
   else echo ""; fi
 }
 
+# Best-effort expected size from the (redirected) download URL's Content-Length.
+# HF `resolve` URLs 302 to a CDN, so follow redirects (-L) and take the last
+# Content-Length seen. Empty when the server won't say — verification then falls
+# back to the GGUF magic check alone.
+remote_size() {
+  if have curl; then
+    curl -sIL "$1" 2>/dev/null \
+      | awk 'tolower($1) == "content-length:" { n = $2 } END { gsub(/\r/, "", n); print n }'
+  else
+    wget --spider -S "$1" 2>&1 \
+      | awk 'tolower($1) == "content-length:" { n = $2 } END { gsub(/\r/, "", n); print n }'
+  fi
+}
+
+# A file is a usable GGUF only if it starts with the ASCII "GGUF" magic and —
+# when we know the expected size — matches it byte-for-byte. This catches the
+# exact failure that silently drops the daemon to the heuristic scorer: a
+# truncated / half-downloaded model, or an HTML error page saved as `.gguf`.
+gguf_ok() { # gguf_ok FILE [EXPECTED_SIZE]
+  [ -s "$1" ] || return 1
+  [ "$(head -c 4 "$1" 2>/dev/null)" = "GGUF" ] || return 1
+  if [ -n "${2:-}" ] && [ "${2:-0}" -gt 0 ] 2>/dev/null; then
+    got="$(wc -c < "$1" 2>/dev/null | tr -d ' \t')"
+    [ "$got" = "$2" ] || return 1
+  fi
+  return 0
+}
+
 # --- RAM → size budget. Mirrors select_spec() in crates/kintsugi-model. ----------
 detect_ram_mb() {
   if [ -r /proc/meminfo ]; then
@@ -172,14 +200,32 @@ FILE="$(printf '%s\n' "$GGUF" | grep -iE 'q4_k_m' | head -n1)"
 [ -n "$FILE" ] || FILE="$(printf '%s\n' "$GGUF" | head -n1)"
 [ -n "$FILE" ] || die "no single-file GGUF found in $REPO (it may be split into shards)"
 
-# --- Download (skip if we already have it) + checksum. -----------------------
+# --- Download (verify integrity; clean + re-fetch if missing/corrupt). -------
 mkdir -p "$DIR"
 DEST="$DIR/$(basename "$FILE")"
-if [ -s "$DEST" ]; then
-  say "already downloaded: $DEST — skipping (delete it to re-fetch)."
+SRC="$HF/$REPO/resolve/main/$FILE?download=true"
+WANT_SIZE="$(remote_size "$SRC" 2>/dev/null || true)"
+
+if [ -e "$DEST" ] && gguf_ok "$DEST" "$WANT_SIZE"; then
+  say "already downloaded and verified: $DEST"
 else
+  if [ -e "$DEST" ]; then
+    warn "existing model file is incomplete or corrupt — cleaning and re-downloading."
+    rm -f "$DEST"
+  fi
+  # Download to a temp file and only move it into place once it verifies, so an
+  # interrupted download can never leave a poisoned final file that a later run
+  # mistakes for a complete model (the bug that left the daemon on heuristic).
+  PART="$DEST.part"
+  rm -f "$PART"
   say "downloading $FILE → $DEST"
-  fetch_to "$HF/$REPO/resolve/main/$FILE?download=true" "$DEST" || die "download failed"
+  fetch_to "$SRC" "$PART" || { rm -f "$PART"; die "download failed"; }
+  if gguf_ok "$PART" "$WANT_SIZE"; then
+    mv -f "$PART" "$DEST"
+  else
+    rm -f "$PART"
+    die "downloaded file failed verification (truncated or not a GGUF) — please retry"
+  fi
 fi
 SUM="$(sha256 "$DEST")"
 [ -n "$SUM" ] && say "sha256  $SUM"
