@@ -26,6 +26,7 @@ serde_json.workspace = true
 anyhow.workspace = true
 sha2.workspace = true
 hex.workspace = true
+directories.workspace = true
 
 llama-cpp-2 = { version = "0.1.146", optional = true }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls"], optional = true }

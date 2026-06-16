@@ -7,6 +7,7 @@
 mod admin_cmd;
 mod init;
 mod logview;
+mod model_cmd;
 mod record;
 mod service;
 
@@ -174,6 +175,14 @@ enum Command {
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
+    /// Manage the optional Tier-2 local model: which GGUF the daemon loads, and
+    /// (for `cargo install` users) building the inference engine. Kintsugi always
+    /// works without a model — this only sharpens the plain-English summary and
+    /// risk score for the ambiguous band.
+    Model {
+        #[command(subcommand)]
+        cmd: ModelCmd,
+    },
     /// Audit report: the destructive commands on the timeline (for compliance /
     /// DBA review). By default shows catastrophic + ambiguous; filterable.
     Report {
@@ -209,6 +218,29 @@ enum RecordCmd {
     },
     /// Show whether the daemon is up to receive recordings, and any spooled gap.
     Status,
+}
+
+/// `kintsugi model` subcommands (the optional Tier-2 local model).
+#[derive(Debug, Subcommand)]
+enum ModelCmd {
+    /// Show the configured model, whether the daemon can run it, and what it is
+    /// scoring with right now.
+    Status,
+    /// Point Kintsugi at a local GGUF and load it. Any GGUF works, so you can
+    /// swap models anytime — no Kintsugi update needed. Restarts a running daemon.
+    Use {
+        /// Path to a `.gguf` model file.
+        path: PathBuf,
+    },
+    /// Choose and download a model from Hugging Face (runs the picker), then load
+    /// it. Re-run anytime to switch to a newer model — independent of releases.
+    Pick,
+    /// First-time setup for `cargo install` users: build the in-process llama
+    /// engine (needs a C/C++ toolchain) and download a model.
+    Install,
+    /// Forget the configured model; the daemon falls back to the always-on
+    /// heuristic scorer. Restarts a running daemon.
+    Remove,
 }
 
 /// `kintsugi admin` subcommands.
@@ -422,6 +454,13 @@ fn main() -> Result<()> {
             RecordCmd::Install { write } => record::install(write),
             RecordCmd::Uninstall { write } => record::uninstall(write),
             RecordCmd::Status => record::status(),
+        },
+        Some(Command::Model { cmd }) => match cmd {
+            ModelCmd::Status => model_cmd::status(),
+            ModelCmd::Use { path } => model_cmd::use_model(&path),
+            ModelCmd::Pick => model_cmd::pick(),
+            ModelCmd::Install => model_cmd::install(),
+            ModelCmd::Remove => model_cmd::remove(),
         },
         Some(Command::Ingest { command, cwd }) => record::ingest(&command, cwd),
         Some(Command::Report {
@@ -826,7 +865,7 @@ fn cmd_undo(session: bool) -> Result<()> {
     Ok(())
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(crate) fn home_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf())
 }
 
@@ -1074,7 +1113,7 @@ fn cmd_banner() -> Result<()> {
     Ok(())
 }
 
-fn cmd_stop() -> Result<()> {
+pub(crate) fn cmd_stop() -> Result<()> {
     // Preferred path: the daemon is up → it authenticates the shutdown itself,
     // against the vault IT loaded at startup. The caller's environment can't
     // redirect that check, so this closes the `KINTSUGI_VAULT` CLI-gate bypass.
@@ -1137,8 +1176,10 @@ fn stop_via_daemon() -> Result<()> {
 /// The GitHub repo + installer URL. The installer is the single source of
 /// truth for download/checksum/source-fallback logic — `update` just re-runs it.
 const UPDATE_REPO: &str = "arrowassassin/kintsugi";
-const INSTALL_URL: &str =
+pub(crate) const INSTALL_URL: &str =
     "https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh";
+pub(crate) const PICKER_URL: &str =
+    "https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh";
 
 /// `kintsugi update`: check GitHub for a newer release and (with consent) install it.
 ///
@@ -1186,7 +1227,7 @@ fn cmd_update(check_only: bool, yes: bool) -> Result<()> {
 
 /// Whether the installed `kintsugi-daemon` (sibling of this binary) has the llama
 /// engine compiled in — probed without starting it.
-fn daemon_has_llama() -> bool {
+pub(crate) fn daemon_has_llama() -> bool {
     let Some(daemon) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("kintsugi-daemon")))
@@ -1216,7 +1257,7 @@ fn latest_release_tag() -> Result<String> {
 
 /// HTTP GET via curl (then wget). No headers beyond the tool's defaults, no body
 /// — so no user data leaves the machine. Returns the response bytes.
-fn http_get(url: &str) -> Result<Vec<u8>> {
+pub(crate) fn http_get(url: &str) -> Result<Vec<u8>> {
     let attempts: [(&str, &[&str]); 2] = [("curl", &["-fsSL", url]), ("wget", &["-qO-", url])];
     for (bin, args) in attempts {
         match std::process::Command::new(bin).args(args).output() {
@@ -1307,7 +1348,7 @@ fn kill_pid(pid: &str) {
         .status();
 }
 
-fn start_daemon() -> Result<()> {
+pub(crate) fn start_daemon() -> Result<()> {
     let daemon_bin = init::sibling_bin("kintsugi-daemon");
     std::process::Command::new(&daemon_bin)
         .stdin(std::process::Stdio::null())
@@ -1342,7 +1383,7 @@ fn describe_scorer(name: &str) -> String {
 
 /// Human-friendly description of the daemon's active scorer, asked over IPC.
 /// `None` when the daemon isn't running or doesn't answer.
-fn active_scorer_label() -> Option<String> {
+pub(crate) fn active_scorer_label() -> Option<String> {
     Client::status_scorer().ok().map(|n| describe_scorer(&n))
 }
 

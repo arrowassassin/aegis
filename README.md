@@ -185,14 +185,20 @@ Prefer Cargo? `cargo install kintsugi` — installs all binaries in one shot.
 
 That's it — Kintsugi works immediately with **no model** (an offline heuristic
 scorer). The optional model just sharpens the plain-English summary and risk
-score for ambiguous commands; the installer can set it up, or do it later (see
-[`docs/model.md`](docs/model.md)).
+score for ambiguous commands; the curl installer can set it up, or do it later
+with `kintsugi model install` (builds the engine + downloads a model — the path
+`cargo install` users take). Swap to any local GGUF anytime with
+`kintsugi model use <path>` — no Kintsugi update needed. See
+[`docs/model.md`](docs/model.md).
 
 Day-to-day: `kintsugi status`, `kintsugi tui` (live timeline), `kintsugi stop` (stop the
 daemon — the inverse of `init`). Also: `kintsugi log`, `kintsugi undo [--session]`,
 `kintsugi queue` / `approve <id>` / `deny <id>`, `kintsugi watch <path>`,
 `kintsugi panic` / `resume`, `kintsugi update` (manual check + self-install from the
 latest GitHub release; `--check` to only report).
+Manage the optional model with `kintsugi model`: `status` (what's loaded and
+why), `use <path>` (point at any GGUF), `pick` (download one), `install` (build
+the engine + download — for `cargo install` users), `remove` (back to heuristic).
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
 are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
 `demo.md`).

@@ -167,6 +167,67 @@ fn panic_engages_and_resume_clears_kill_switch() {
 }
 
 #[test]
+fn model_use_status_remove_round_trip() {
+    // No daemon running here, so `model use` persists the selection and tells the
+    // user to start the daemon (rather than spawning one as a side effect).
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let model = tmp.path().join("my.gguf");
+    std::fs::write(&model, b"fake-weights").unwrap();
+
+    let common = |c: &mut Command| {
+        c.env("KINTSUGI_DATA_DIR", &data)
+            .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+            .env_remove("KINTSUGI_MODEL_FILE");
+    };
+
+    // use: writes the config file and reports the path.
+    let mut u = kintsugi();
+    u.args(["model", "use"]).arg(&model);
+    common(&mut u);
+    let out = u.output().unwrap();
+    assert!(out.status.success(), "model use failed: {out:?}");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("model set to"), "use output: {s}");
+    assert!(data.join("model.path").is_file(), "config not written");
+
+    // status: reflects the configured model and that no engine is built.
+    let mut st = kintsugi();
+    st.args(["model", "status"]);
+    common(&mut st);
+    let out = st.output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("configured:"), "status output: {s}");
+    assert!(s.contains("my.gguf"), "status should show the model: {s}");
+
+    // remove: clears the selection.
+    let mut rm = kintsugi();
+    rm.args(["model", "remove"]);
+    common(&mut rm);
+    let out = rm.output().unwrap();
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("cleared the configured model"),
+        "remove should confirm"
+    );
+    assert!(!data.join("model.path").exists(), "config not cleared");
+}
+
+#[test]
+fn model_use_rejects_a_missing_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = kintsugi()
+        .args(["model", "use"])
+        .arg(tmp.path().join("nope.gguf"))
+        .env("KINTSUGI_DATA_DIR", tmp.path().join("data"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "a missing file must be rejected");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a readable file"));
+}
+
+#[test]
 fn init_print_path_emits_export_line() {
     let tmp = tempfile::tempdir().unwrap();
     let out = kintsugi()

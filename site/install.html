@@ -98,9 +98,17 @@
     <p class="muted">Or fold it into the install above with
       <span class="t-grn">| sh -s -- --with-model</span>. The query is constrained
       (<span class="muted">filter=gguf</span>, text-generation, sized to your RAM)
-      so only viable options appear. Already have a GGUF? Skip the picker and set
-      <span class="t-grn">KINTSUGI_MODEL_FILE=/path/to/model.gguf</span> — any local
-      model, no recompile.</p>
+      so only viable options appear.</p>
+    <p class="muted"><strong>Manage it later with <span class="t-grn">kintsugi model</span>.</strong>
+      Installed via <span class="t-grn">cargo install</span> and want the model?
+      <span class="t-grn">kintsugi model install</span> builds the engine and downloads
+      a model in one step. Already have a GGUF, or want a newer one?
+      <span class="t-grn">kintsugi model use /path/to/model.gguf</span> points the daemon
+      at it and reloads — any local model, no Kintsugi update, no recompile.
+      <span class="t-grn">kintsugi model status</span> shows what's loaded (and why it
+      might still be heuristic); <span class="t-grn">kintsugi model remove</span> reverts
+      to the always-on heuristic scorer. The choice is persisted, so it survives daemon
+      restarts without a shell env var.</p>
   </section>
 
   <section id="plugin">
@@ -146,6 +154,7 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
 <span class="t-grn">kintsugi stop</span>           stop the background daemon (inverse of init)
 <span class="t-grn">kintsugi status</span>         daemon / socket / log / chain / scorer / kill-switch
 <span class="t-grn">kintsugi update</span>         check GitHub for a newer release &amp; install in place
+<span class="t-grn">kintsugi model</span> &lt;cmd&gt;    status · use &lt;path&gt; · pick · install · remove (local model)
 <span class="t-grn">kintsugi log</span> [-n N]     recent command timeline
 <span class="t-grn">kintsugi tui</span>            live, interactive timeline (filter: agent: session: since:)
 <span class="t-grn">kintsugi queue</span>          commands held for approval
