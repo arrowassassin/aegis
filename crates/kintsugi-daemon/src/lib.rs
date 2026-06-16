@@ -37,6 +37,44 @@ pub fn kill_switch_path() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join(KILL_SWITCH_FILE))
 }
 
+/// The fail-closed marker file name, alongside the event-log database.
+pub const FAIL_CLOSED_FILE: &str = "fail-closed.flag";
+
+/// Path to the fail-closed marker (alongside the default event log). Its mere
+/// existence is the signal — the content is irrelevant. The interception layer
+/// (shim/hook/MCP) reads it **without** the daemon, so that killing the daemon
+/// can't be used to open the gate: with the marker present, an unreachable
+/// daemon means *block*, not *run unguarded*.
+pub fn fail_closed_marker_path() -> PathBuf {
+    default_db_path().with_file_name(FAIL_CLOSED_FILE)
+}
+
+/// Whether the admin-set fail-closed marker is present. Cheap, daemon-free, and
+/// callable from the interception fast path. In the locked posture the marker is
+/// owned by the privileged account (root / a dedicated `kintsugi` user), so an
+/// audited non-root agent cannot remove it to re-open the gate.
+pub fn is_fail_closed_marked() -> bool {
+    fail_closed_marker_path().exists()
+}
+
+/// Create or remove the fail-closed marker to match `on`. Best-effort, atomic
+/// create; called by the admin flow when the locked `fail_closed` setting
+/// changes so the posture survives a daemon restart and a kill.
+pub fn set_fail_closed_marker(on: bool) -> std::io::Result<()> {
+    let path = fail_closed_marker_path();
+    if on {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // 0644: world-readable (the shim must read it) but, in the locked posture,
+        // owned by the privileged account so the audited user can't delete it.
+        std::fs::write(&path, b"fail-closed\n")?;
+    } else if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
 /// Resolve the event-log database path. Override with `KINTSUGI_DB` (handy in tests).
 pub fn default_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("KINTSUGI_DB") {
