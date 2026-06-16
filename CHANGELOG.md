@@ -29,6 +29,14 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   is `kintsugi-mcp` (was briefly `kintsugi-exec`), matching the release archive,
   the installer, `kintsugi init` wiring, and the plugin config — fixes
   "binary kintsugi-mcp missing from archive" on install.
+- **Fix: a corrupt/half-downloaded model silently fell back to heuristic.** The
+  picker treated any non-empty file as "already downloaded" and wrote directly
+  to the final path, so an interrupted download left a truncated GGUF that was
+  never re-fetched and that `llama.cpp` then failed to load. `pick-model.sh` now
+  downloads to a temp file, verifies the GGUF magic + expected size, only moves
+  it into place on success, and cleans + re-fetches a corrupt existing file.
+  `kintsugi model status` / `use` flag a configured file that isn't a valid GGUF
+  so the failure is visible instead of a silent heuristic fallback.
 - **Fix: installer built the wrong crate for the model.** After the binary
   consolidation, `install.sh` still rebuilt `kintsugi-daemon` (now a library-only
   crate) for the llama engine and built `kintsugi-cli`/`kintsugi-intercept` from
