@@ -188,10 +188,10 @@ section h2 .n { color: var(--gold-bright); }
 .flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; margin:18px 0; }
 .flow .box { flex:1 1 150px; border:3px solid var(--line); background:var(--panel);
   padding:12px; min-width:150px; }
-.flow .box h4 { font-family:"Press Start 2P"; font-size:9px; margin:0 0 8px; color:var(--green); }
+.flow .box h4 { font-family:"Press Start 2P"; font-size:9px; margin:0 0 8px; color:var(--gold); }
 .flow .box.warn h4 { color: var(--red); }
 .flow .box p { margin:0; font-size:18px; color:var(--dim); }
-.flow .arrow { align-self:center; color:var(--amber); font-size:24px; }
+.flow .arrow { align-self:center; color:var(--gold); font-size:24px; }
 
 /* ---- install ---- */
 .cmd { position: relative; }
@@ -205,7 +205,7 @@ section h2 .n { color: var(--gold-bright); }
 
 ul.checks { list-style:none; padding:0; }
 ul.checks li { padding:4px 0 4px 28px; position:relative; font-size:21px; }
-ul.checks li::before { content:"▸"; color:var(--green); position:absolute; left:6px; }
+ul.checks li::before { content:"▸"; color:var(--gold); position:absolute; left:6px; }
 
 .cols { display:grid; grid-template-columns:1fr; gap:24px; }
 @media (min-width: 760px){ .cols.two{grid-template-columns:1fr 1fr} }
@@ -223,7 +223,7 @@ footer a { color: var(--cyan); }
 .themebtn { font-family:"Press Start 2P"; font-size:10px; background:var(--panel);
   color:var(--ink); border:2px solid var(--line); padding:7px 9px; cursor:pointer;
   display:inline-flex; align-items:center; line-height:1; }
-.themebtn:hover { color:var(--green); }
+.themebtn:hover { color:var(--gold); }
 
 /* ---- the tour page ---- */
 /* Each scene is a numbered story beat: a small 8-bit header, a square SVG
@@ -233,13 +233,13 @@ footer a { color: var(--cyan); }
 .scene-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
 .scene-num {
   font-family: "Press Start 2P", monospace; font-size: 12px;
-  color: var(--green);
+  color: var(--gold);
   background: var(--panel); border: 2px solid var(--line);
   padding: 8px 10px; line-height: 1;
 }
 .scene-head h2 {
-  margin: 0; font-size: 18px; color: var(--amber);
-  text-shadow: 3px 3px 0 #3a2b06; line-height: 1.2;
+  margin: 0; font-size: 18px; color: var(--gold);
+  text-shadow: 3px 3px 0 var(--gold-shadow); line-height: 1.2;
 }
 .scene-grid {
   display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start;
@@ -307,7 +307,7 @@ footer a { color: var(--cyan); }
   padding: 0;
   cursor: pointer;
 }
-.navtoggle:hover, .navtoggle[aria-expanded="true"] { color: var(--green); }
+.navtoggle:hover, .navtoggle[aria-expanded="true"] { color: var(--gold); }
 
 /* ---- mobile layout ---- */
 /* Phones: collapse the nav into a hamburger panel, shrink the hero, and stack
@@ -342,7 +342,7 @@ footer a { color: var(--cyan); }
     gap: 14px;
   }
   .nav[data-nav="open"] nav { display: flex; }
-  .nav[data-nav="open"] .navtoggle { color: var(--green); }
+  .nav[data-nav="open"] .navtoggle { color: var(--gold); }
   .nav nav a { font-size: 11px; padding: 4px 0; }
   .themebtn { font-size: 11px; }
 
@@ -379,14 +379,21 @@ footer a { color: var(--cyan); }
   }
 }
 
-/* ---- light theme (chrome flips; terminals stay dark, as terminals do) ---- */
+/* ---- light theme (chrome flips; terminals stay dark, as terminals do) ----
+   On cream, pure #D4AF37 is too pale to read, so the brand gold deepens to an
+   antique gold for text/chrome while the gold *fill* on buttons stays warm. */
 :root[data-theme="light"] {
   --bg:#f3efe3; --bg2:#efe9da; --panel:#fbf8ef; --ink:#1b2230; --dim:#5f6b80;
   --line:#c9c0a6; --green:#1f8a4c; --amber:#a9760a; --cyan:#1f6f8b; --red:#c0392b;
+  --gold:#9C6F1C; --gold-bright:#B8860B; --gold-deep:#caa84e; --gold-shadow:#e7d9ab;
 }
 :root[data-theme="light"] body {
   background: radial-gradient(1200px 600px at 50% -10%, #fff8e6 0%, transparent 60%), var(--bg);
 }
-:root[data-theme="light"] .hero h1 { text-shadow: 3px 3px 0 #bfe9cf, 6px 6px 0 #e6f6ec; }
+:root[data-theme="light"] .hero h1 { text-shadow: 3px 3px 0 #e7d9ab, 6px 6px 0 #f3ecd2; }
 :root[data-theme="light"] body::after { opacity: .12; }
-:root[data-theme="light"] .btn { box-shadow:4px 4px 0 #b7d8c2; }
+:root[data-theme="light"] .btn { color:#241a06; background:#d8b042; box-shadow:4px 4px 0 #caa84e; }
+:root[data-theme="light"] .btn:hover { box-shadow:6px 6px 0 #caa84e; color:#241a06; }
+/* the molten glow is invisible on cream; soften it into a subtle warm shadow */
+:root[data-theme="light"] .brandhero .lockup { filter: drop-shadow(0 4px 14px rgba(156,111,28,.18)); }
+:root[data-theme="light"] .seam { opacity: .8; }

@@ -235,3 +235,17 @@ internal review, not a third-party audit (same honesty note as above applies).
 across-restart; `admin` auth-proof round-trip (valid/invalid/replay/op-binding);
 daemon authenticated-shutdown (valid proof / wrong password / replay rejected /
 unprovisioned); TUI login gate + settings re-seal + zeroized buffer.
+
+## Re-run results (this round)
+
+| Check | Result |
+|---|---|
+| Catastrophic-classified-as-Safe (zero-tolerance gate) | **0** — `enterprise_security_stress_zero_leak` passes (classifier unchanged this round) |
+| Redaction defeats command wrappers (`sudo`/`env`/`timeout` + DB client) | **pass** — secret never reaches the log |
+| Recorder spool holds a cleartext secret | **no** — redacted before write, `0600` |
+| `Record` can forge an agent/watcher label | **no** — forced to `shell` |
+| Daemon shutdown without the password (locked) | **no** — challenge-response enforced daemon-side; replay rejected |
+| Per-changed-crate test suites (core / daemon / cli / tui) | **green** |
+
+The full workspace matrix runs in CI; locally each changed crate's suite passes
+and the `kintsugi` binary links the entire graph.
