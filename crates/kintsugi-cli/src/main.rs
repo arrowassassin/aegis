@@ -7,6 +7,7 @@
 mod admin_cmd;
 mod init;
 mod logview;
+mod service;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -44,6 +45,12 @@ enum Command {
     Admin {
         #[command(subcommand)]
         cmd: AdminCmd,
+    },
+    /// Run the daemon under an OS supervisor that auto-restarts it (so a kill /
+    /// pkill relaunches it). install / uninstall / status.
+    Service {
+        #[command(subcommand)]
+        cmd: ServiceCmd,
     },
     /// Check GitHub for a newer release and install it in place. A manual,
     /// user-invoked check that sends no data — only fetches the latest release
@@ -162,6 +169,17 @@ enum AdminCmd {
     Status,
     /// Change the admin password (and rotate the recovery key).
     ChangePassword,
+}
+
+/// `kintsugi service` subcommands.
+#[derive(Debug, Subcommand)]
+enum ServiceCmd {
+    /// Install + enable the auto-restart service (systemd user unit / launchd agent).
+    Install,
+    /// Disable + remove it (requires the admin password when locked).
+    Uninstall,
+    /// Show whether the auto-restart service is installed.
+    Status,
 }
 
 /// Shared filter flags for `log`, `redact`, and `purge`.
@@ -287,6 +305,11 @@ fn main() -> Result<()> {
             } => admin_cmd::provision(password_file, force),
             AdminCmd::Status => admin_cmd::status(),
             AdminCmd::ChangePassword => admin_cmd::change_password(),
+        },
+        Some(Command::Service { cmd }) => match cmd {
+            ServiceCmd::Install => service::install(),
+            ServiceCmd::Uninstall => service::uninstall(),
+            ServiceCmd::Status => service::status(),
         },
         Some(Command::Update { check, yes }) => cmd_update(check, yes),
         Some(Command::Log {

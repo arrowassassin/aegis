@@ -5,6 +5,16 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Admin settings + audit recorder (phase A2)
+- **`kintsugi admin`** provisions a password-locked, sealed settings vault;
+  **`kintsugi stop` now requires the admin password** when locked (Unprovisioned
+  proceeds, Degraded refuses - fail-closed). Defeats an agent/casual user; a root
+  `kill` still wins.
+- **`kintsugi service install`** runs the daemon under systemd (Linux) / launchd
+  (macOS) with **auto-restart**, so a `kill`/`pkill` relaunches it within seconds;
+  `service uninstall` is password-gated. This + a dedicated system account is what
+  makes the lock real against `pkill`.
+
 ### Admin settings + audit recorder (phase A1)
 - **Locked-settings crypto core** (`kintsugi_core::admin`): argon2id password
   verifier + XChaCha20-Poly1305 sealed settings with a one-time recovery key, the
