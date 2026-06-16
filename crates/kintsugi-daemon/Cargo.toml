@@ -16,10 +16,6 @@ rust-version.workspace = true
 name = "kintsugi_daemon"
 path = "src/lib.rs"
 
-[[bin]]
-name = "kintsugi-daemon"
-path = "src/main.rs"
-
 [dependencies]
 kintsugi-core.workspace = true
 kintsugi-model.workspace = true
