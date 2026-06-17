@@ -5,6 +5,7 @@
 //! later phases.
 
 mod admin_cmd;
+mod dryrun;
 mod init;
 mod logview;
 mod model_cmd;
@@ -129,6 +130,21 @@ enum Command {
         /// The command line to classify (quote it).
         command: String,
     },
+    /// "What would Kintsugi have caught?" — classify a batch of commands you've
+    /// already run (your shell history by default, a `--file`, or piped stdin)
+    /// and report which would have been held or blocked. Runs nothing, logs
+    /// nothing, sends nothing. The proof-before-trust command.
+    DryRun {
+        /// Read commands from this file (one per line) instead of shell history.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// How many of the most recent commands to scan.
+        #[arg(short = 'n', long, default_value_t = 200)]
+        number: usize,
+    },
+    /// What Kintsugi can and can't protect — its honest threat scope, in plain
+    /// English. A safety tool that names its own blind spots is one you can trust.
+    Limits,
     /// List commands held for approval.
     Queue,
     /// Approve a held command by id (or unique id prefix).
@@ -444,6 +460,8 @@ fn main() -> Result<()> {
         Some(Command::Watch { paths }) => kintsugi_daemon::watch::run(&paths),
         Some(Command::Tui) => kintsugi_tui::run(&default_db_path(), &snapshot_dir()),
         Some(Command::Test { command }) => cmd_test(&command),
+        Some(Command::DryRun { file, number }) => dryrun::run(file, number),
+        Some(Command::Limits) => cmd_limits(),
         Some(Command::Queue) => cmd_queue(),
         Some(Command::Approve { id }) => cmd_resolve_pending(&id, true),
         Some(Command::Deny { id }) => cmd_resolve_pending(&id, false),
@@ -525,6 +543,66 @@ fn cmd_test(raw: &str) -> Result<()> {
 
     println!();
     println!("Dry run: nothing was executed, logged, or sent anywhere.");
+    Ok(())
+}
+
+/// `kintsugi limits` — the honest threat scope. Operationalizes security-spine
+/// rule #7 ("nothing is unrecoverable", NOT "nothing runs un-warned") as an
+/// in-product page, so the boundary is something the user reads before they hit
+/// it the hard way. Pure text; reads and runs nothing.
+fn cmd_limits() -> Result<()> {
+    let color = logview::use_color(
+        std::env::var_os("NO_COLOR").is_some(),
+        std::io::stdout().is_terminal(),
+    );
+    let h = |s: &str| {
+        if color {
+            format!("\x1b[1m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    };
+
+    println!("Kintsugi is a seatbelt, not a kernel firewall.");
+    println!(
+        "The honest guarantee is \"nothing is unrecoverable\" — not \"nothing runs un-warned.\""
+    );
+    println!("Here is exactly where that line falls.\n");
+
+    println!("{}", h("What it protects well"));
+    println!("  • Commands an agent runs through a wired hook, the MCP server, or the");
+    println!("    $PATH shim are classified before they run; catastrophic ones are blocked.");
+    println!("  • The decision is made by deterministic rules — never the model, which can");
+    println!("    only add caution, never unblock. So it can't be talked past by a prompt.");
+    println!("  • Destructive actions are snapshotted first, so `kintsugi undo` rolls them back.");
+    println!(
+        "  • The audit log is append-only and hash-chained: editing the past is detectable.\n"
+    );
+
+    println!("{}", h("What can step around the warning"));
+    println!("  • An agent in a \"yolo\" / auto-approve mode that skips its own hook.");
+    println!("  • A process that calls a tool by absolute path (/bin/rm), dodging the shim.");
+    println!("  • A statically-linked binary or a direct syscall.");
+    println!("  → For these, the filesystem-watcher backstop is your net: it records changes");
+    println!("    so `kintsugi undo` can still recover files. Turn it on for your work tree.\n");
+
+    println!("{}", h("What undo cannot bring back"));
+    println!("  • Anything off the filesystem: a sent network request, a force-pushed commit,");
+    println!("    an email, a deleted cloud resource.");
+    println!(
+        "  • A dropped/truncated remote database table — use your DB's point-in-time recovery."
+    );
+    println!("  • Unbounded targets (a glob, a $VARIABLE, the filesystem root, a device node)");
+    println!("    can't be fully snapshotted; Kintsugi says so before you confirm, and the");
+    println!("    watcher backstop is the fallback there, not a clean per-command undo.\n");
+
+    println!("{}", h("What the admin-lock does and doesn't stop"));
+    println!("  • It stops an agent, or a normal user, from quietly turning Kintsugi off.");
+    println!("  • It does NOT stop a determined process running as root. It guards against");
+    println!("    mistakes, reversibly — not a privileged adversary.\n");
+
+    println!("If a catastrophic command ever slips through to \"safe,\" that's a bug we treat");
+    println!("as critical — please report it: https://github.com/arrowassassin/kintsugi/issues");
     Ok(())
 }
 
@@ -1412,6 +1490,27 @@ fn cmd_status() -> Result<()> {
                 let count = log.count().unwrap_or(0);
                 let chain = log.verify_chain()?;
                 println!("  events:  {count}");
+                // Saves: what Kintsugi has actually done for you — the invisible
+                // wins made visible. Catastrophic commands it flagged, ambiguous
+                // ones it held, and snapshots it can still roll back.
+                let cata = log
+                    .count_matching(&kintsugi_core::Filter {
+                        class: Some(Class::Catastrophic),
+                        ..Default::default()
+                    })
+                    .unwrap_or(0);
+                let amb = log
+                    .count_matching(&kintsugi_core::Filter {
+                        class: Some(Class::Ambiguous),
+                        ..Default::default()
+                    })
+                    .unwrap_or(0);
+                let reversible = log.unreverted_snapshots().map(|v| v.len()).unwrap_or(0);
+                if cata > 0 || amb > 0 || reversible > 0 {
+                    println!(
+                        "  saves:   {cata} catastrophic flagged · {amb} ambiguous held · {reversible} reversible"
+                    );
+                }
                 println!(
                     "  chain:   {}",
                     if chain.is_intact() {

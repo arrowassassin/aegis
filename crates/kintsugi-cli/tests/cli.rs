@@ -94,6 +94,66 @@ fn undo_restores_a_snapshotted_file() {
 }
 
 #[test]
+fn dry_run_flags_dangerous_commands_from_stdin() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = kintsugi()
+        .arg("dry-run")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"git status\nrm -rf ./build\ncargo test\ngit push --force\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("dry-run"));
+    assert!(s.contains("would have been held or blocked"));
+    assert!(s.contains("rm -rf ./build"));
+    assert!(s.contains("git push --force"));
+}
+
+#[test]
+fn dry_run_redacts_secrets_before_printing() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = kintsugi()
+        .arg("dry-run")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"PGPASSWORD=hunter2 rm -rf /var/data\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !s.contains("hunter2"),
+        "a secret leaked into dry-run output"
+    );
+    assert!(s.contains("[redacted]"));
+}
+
+#[test]
+fn limits_prints_the_honest_threat_scope() {
+    let out = kintsugi().arg("limits").output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("seatbelt"));
+    assert!(s.contains("undo cannot bring back"));
+    assert!(s.contains("admin-lock"));
+}
+
+#[test]
 fn queue_without_daemon_is_graceful() {
     let tmp = tempfile::tempdir().unwrap();
     let out = kintsugi()
