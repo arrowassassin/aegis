@@ -1692,10 +1692,13 @@ fn cmd_status() -> Result<()> {
         }
     }
 
-    // Shell enforcement: when on, the wiring sits in root-owned system files a
-    // normal user can't edit out — only root (or the admin password) can remove.
-    if shell_enforce::is_enforced() {
-        println!("  shell:   enforced system-wide (only root/admin can remove)");
+    // Shell enforcement: only claim "un-removable" when the wiring is actually in
+    // root-owned files. If it's present but not root-owned, say so — that's a
+    // weaker state a normal user could still edit.
+    if shell_enforce::is_root_enforced() {
+        println!("  shell:   enforced system-wide (root-owned; only root/admin can remove)");
+    } else if shell_enforce::is_enforced() {
+        println!("  shell:   wiring present but NOT root-owned — a user could still edit it");
     }
 
     // The panic kill-switch is the loudest state — surface it prominently.

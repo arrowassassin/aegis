@@ -140,9 +140,12 @@ fn enforce_shell_install_status_remove_round_trip() {
     st.arg("status");
     common(&mut st);
     let out = st.output().unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    // Root-owned (CI-as-root) shows "enforced system-wide"; a user-owned temp
+    // /etc shows "wiring present but NOT root-owned". Either proves status saw it.
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("enforced system-wide"),
-        "kintsugi status should surface enforcement"
+        s.contains("enforced system-wide") || s.contains("wiring present"),
+        "kintsugi status should surface shell enforcement, got:\n{s}"
     );
 
     // Remove — vault is unprovisioned, so it proceeds without a password prompt.
