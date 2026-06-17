@@ -1482,10 +1482,77 @@ fn cmd_update(check_only: bool, yes: bool) -> Result<()> {
     }
 
     run_installer(&tag, had_llama).context("install the update")?;
+
+    // Verify the result instead of trusting it. A release built without bumping
+    // its version, or another `kintsugi` shadowing ours on PATH, otherwise looks
+    // like a silent no-op ("still on the old version") — the exact failure users
+    // hit. Catch both and say what's actually wrong.
+    verify_update(latest);
+
     println!(
         "  ✓ updated to {latest}. Restart the daemon to run it:  kintsugi stop && kintsugi init"
     );
     Ok(())
+}
+
+/// After installing, confirm the binary that now sits where we installed actually
+/// reports the new version, and that it's the one the user's shell will run.
+fn verify_update(expected: &str) {
+    let Some(installed) = std::env::current_exe().ok() else {
+        return;
+    };
+    // 1. Did the new binary land with the right version?
+    if let Some(got) = binary_version(&installed) {
+        let got = got.trim_start_matches('v');
+        if got != expected {
+            eprintln!(
+                "  ⚠ installed {expected}, but {} reports {got}.",
+                installed.display()
+            );
+            eprintln!("    The release was likely built without bumping its version — the code is");
+            eprintln!("    updated (the new features are active; check `kintsugi tui`), only the");
+            eprintln!("    version string is stale. Nothing more to do on your end.");
+        }
+    }
+    // 2. Will the shell actually run the binary we just updated?
+    if let Some(active) = first_on_path("kintsugi") {
+        let same = std::fs::canonicalize(&active).ok() == std::fs::canonicalize(&installed).ok();
+        if !same {
+            eprintln!(
+                "  ⚠ your shell runs {} first, not the just-updated {}.",
+                active.display(),
+                installed.display()
+            );
+            eprintln!(
+                "    Put {} earlier on PATH (or remove the older copy) so `kintsugi` is the new one.",
+                installed.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            );
+        }
+    }
+}
+
+/// Run `<bin> --version` and return the reported version token (the last word of
+/// e.g. `kintsugi 0.1.5`), or `None` if it can't be determined.
+fn binary_version(bin: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new(bin)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .last()
+        .map(str::to_string)
+}
+
+/// The first `name` found on `PATH` — what an interactive shell would resolve.
+fn first_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
 /// Whether the installed `kintsugi-daemon` (sibling of this binary) has the llama

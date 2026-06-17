@@ -11,7 +11,25 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   (`https://arrowassassin.github.io/kintsugi/…`), which serves SVG as `image/svg+xml`.
   README-only change; no code changes.
 
-## [Unreleased]
+## [0.1.5]
+
+### Fixes from real-world use
+- **Version reporting fixed.** The crate version is bumped to `0.1.5`; an earlier
+  tag was cut without bumping it, so the binary self-reported a stale version and
+  `kintsugi update` would offer the "new" release forever. `kintsugi update` now
+  **verifies** the result: it warns if the freshly-installed binary reports the
+  wrong version (a release built without a bump) or if another `kintsugi` shadows
+  it earlier on your `PATH` — instead of silently looking like a no-op.
+- **The backstop watcher is far quieter.** It now records only the *destructive*
+  filesystem signals it exists to catch — **deletions and renames** — and skips
+  file creates and content saves (the bulk of a working tree's churn, already
+  covered by interception + snapshots for agent writes). It also ignores
+  build/VCS/cache trees (`.git`, `node_modules`, `target`, `dist`, …) and editor
+  scratch files. This keeps the append-only log to signal, not noise.
+- **The TUI separates the backstop from the timeline.** `fs-watch` observations
+  now live in their own **Backstop** tab (press `4`) instead of flooding the
+  Timeline, which is now agent + human command activity. ("fs-watch" is the
+  filesystem backstop `kintsugi init` starts — see `kintsugi limits`.)
 
 ### Make the protection visible and trustworthy
 - **`kintsugi dry-run`** — point Kintsugi at commands you've already run (your

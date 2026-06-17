@@ -324,6 +324,16 @@ fn dry_run_redacts_secrets_before_printing() {
 }
 
 #[test]
+fn version_reports_the_bumped_number() {
+    // Guards against the release-hygiene bug where the tag is cut without bumping
+    // the crate version (so the binary self-reports a stale number).
+    let out = kintsugi().arg("--version").output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("0.1.5"), "version should be 0.1.5, got: {s}");
+}
+
+#[test]
 fn limits_prints_the_honest_threat_scope() {
     let out = kintsugi().arg("limits").output().unwrap();
     assert!(out.status.success());
