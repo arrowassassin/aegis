@@ -449,6 +449,17 @@ the locked product decisions this build implements.
   surrounding file contents. Tests use `KINTSUGI_ETC_DIR` to exercise the logic
   without touching real `/etc`. Honest scope: binds users below root, not root —
   stated in `kintsugi limits` and the install message.
+- Google Antigravity: detected via its own `~/.gemini/antigravity-cli` subtree
+  (not bare `~/.gemini`, which it shares with the Gemini CLI — both are wired
+  independently when present). Primary interception is a native `PreToolUse`
+  plugin hook (`plugins/kintsugi/hooks.json`, matcher `run_command`); the
+  `antigravity` dialect reads `toolCall.arguments.CommandLine` and replies
+  `{decision: allow|deny}` with allow emitted explicitly (its contract expects a
+  decision object on stdout). No native ask → ambiguous holds map to deny
+  (monotonic caution). MCP is the documented fallback (`mcpServers` in
+  `~/.gemini/config/mcp_config.json`). Hook schema is per current Antigravity
+  docs (Nov 2025 launch); it fails open if the format drifts, and the $PATH shim
+  + backstop still cover it.
 - Backstop noise: the FS-watcher records only deletions and renames (the
   destructive, actionable signals), not creates/content-saves, and skips
   build/VCS/cache trees + editor scratch files. Rationale: the append-only log

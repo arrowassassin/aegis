@@ -1286,6 +1286,7 @@ fn wire_hook(kind: init::HookKind, home: Option<&std::path::Path>) -> Result<()>
         Copilot => wire_copilot(home),
         Codex => wire_codex(home),
         OpenCode => wire_opencode(home),
+        Antigravity => wire_antigravity(home),
     }
 }
 
@@ -1343,6 +1344,28 @@ fn wire_opencode(home: &std::path::Path) -> Result<()> {
     let hook_bin = init::sibling_bin("kintsugi-hook");
     let js = init::opencode_plugin_js(&hook_bin.to_string_lossy());
     write_file(&path, &js)
+}
+
+/// Antigravity: write the plugin hook at
+/// `~/.gemini/antigravity-cli/plugins/kintsugi/hooks.json` (a file Kintsugi owns
+/// wholesale). Also print where to add the MCP server as the documented fallback.
+fn wire_antigravity(home: &std::path::Path) -> Result<()> {
+    let path = home
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("plugins")
+        .join("kintsugi")
+        .join("hooks.json");
+    let cfg = init::antigravity_hooks_config(&hook_command("antigravity"));
+    write_file(&path, &serde_json::to_string_pretty(&cfg)?)?;
+    // Surface the MCP alternative — Antigravity reads ~/.gemini/config/mcp_config.json
+    // (or .agents/mcp_config.json per workspace). Print the exact entry to paste.
+    let mcp = init::antigravity_mcp_config(&init::sibling_bin("kintsugi-mcp").to_string_lossy());
+    println!("      MCP alternative — merge into ~/.gemini/config/mcp_config.json:");
+    for line in serde_json::to_string_pretty(&mcp)?.lines() {
+        println!("        {line}");
+    }
+    Ok(())
 }
 
 /// Bare `kintsugi`: a short banner that tells you the current state and the next step.

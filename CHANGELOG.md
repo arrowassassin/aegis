@@ -13,6 +13,18 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [0.1.5]
 
+### Google Antigravity support
+- **`kintsugi init` now detects and wires Google Antigravity** like the other
+  agents. It installs a native `PreToolUse` plugin hook at
+  `~/.gemini/antigravity-cli/plugins/kintsugi/hooks.json` (matcher `run_command`),
+  so destructive commands are classified before they run, and prints the
+  `mcpServers` entry to add to `~/.gemini/config/mcp_config.json` as the MCP
+  fallback. A new `antigravity` hook dialect parses Antigravity's
+  `toolCall.arguments.CommandLine` payload and answers `{decision: allow|deny}`
+  (no native "ask" — an ambiguous hold maps to deny, per the monotonic-caution
+  rule). Detection uses Antigravity's own `~/.gemini/antigravity-cli` subtree, so
+  it's distinguished from a plain Gemini CLI install that shares `~/.gemini`.
+
 ### Fixes from real-world use
 - **Version reporting fixed.** The crate version is bumped to `0.1.5`; an earlier
   tag was cut without bumping it, so the binary self-reported a stale version and
