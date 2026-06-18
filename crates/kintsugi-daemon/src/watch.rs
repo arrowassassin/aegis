@@ -103,20 +103,51 @@ pub fn run(roots: &[PathBuf]) -> Result<()> {
     })
     .context("create filesystem watcher")?;
 
+    let mut registered = 0usize;
     for root in roots {
-        watcher
-            .watch(root, RecursiveMode::Recursive)
-            .with_context(|| format!("watch {}", root.display()))?;
-        eprintln!("kintsugi-watch: watching {}", root.display());
+        match watcher.watch(root, RecursiveMode::Recursive) {
+            Ok(()) => {
+                registered += 1;
+                eprintln!("kintsugi-watch: watching {}", root.display());
+            }
+            // A single root we can't watch is a partial blind spot, not a reason
+            // to abandon the others — record the gap and carry on.
+            Err(e) => record_marker(&format!("cannot watch {}: {e}", root.display())),
+        }
+    }
+    if registered == 0 {
+        anyhow::bail!("could not watch any of the requested paths");
     }
 
     for res in rx {
         match res {
-            Ok(event) => forward(&event),
-            Err(e) => eprintln!("kintsugi-watch: watch error: {e}"),
+            Ok(event) => {
+                // The OS dropped events (queue overflow): the backstop missed
+                // changes in this window. Surface it instead of silently losing
+                // coverage — the honest guarantee depends on knowing the gap.
+                if event.need_rescan() {
+                    record_marker("event queue overflow — some changes were not recorded");
+                }
+                forward(&event);
+            }
+            Err(e) => record_marker(&format!("watch error: {e}")),
         }
     }
     Ok(())
+}
+
+/// Surface a backstop degradation: log it and record a `backstop-degraded`
+/// observation so the timeline shows the watcher's coverage was reduced rather
+/// than failing silently.
+fn record_marker(reason: &str) {
+    eprintln!("kintsugi-watch: backstop degraded: {reason}");
+    let obs = Observation {
+        kind: "backstop-degraded".into(),
+        path: reason.into(),
+    };
+    if let Err(e) = Client::observe(&obs) {
+        eprintln!("kintsugi-watch: could not record degradation marker: {e}");
+    }
 }
 
 /// Forward one notify event's interesting paths to the daemon.
