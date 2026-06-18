@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# Least-privilege GITHUB_TOKEN: every job here only checks out, builds, tests,
+# and uploads an artifact — none of which needs write access to the repo. The
+# security-events write needed by code scanning lives in the separate CodeQL
+# workflow, not here.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
