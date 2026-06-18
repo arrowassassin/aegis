@@ -46,6 +46,11 @@ const IGNORED_DIRS: &[&str] = &[
     ".gradle",
     ".terraform",
     ".DS_Store",
+    // macOS ~/Library + Unity/Xcode churn: renames/removes here are pure OS noise,
+    // not user activity, and otherwise bury real events in the timeline.
+    "Library",
+    "Caches",
+    "DerivedData",
 ];
 
 /// Map a notify event kind to a stable label, or `None` to ignore it.
@@ -209,6 +214,11 @@ mod tests {
         assert!(is_ignored(Path::new("/home/u/proj/src/.main.rs.swp")));
         assert!(is_ignored(Path::new("/home/u/proj/.DS_Store")));
         assert!(is_ignored(Path::new("/home/u/proj/src/main.rs~")));
+        // macOS OS churn under ~/Library is ignored (pure noise, not user activity).
+        assert!(is_ignored(Path::new(
+            "/Users/x/Library/Preferences/foo.plist"
+        )));
+        assert!(is_ignored(Path::new("/Users/x/Library/Caches/bar")));
         // A real source file is not ignored.
         assert!(!is_ignored(Path::new("/home/u/proj/src/main.rs")));
         assert!(!is_ignored(Path::new("/home/u/proj/data/users.sql")));
