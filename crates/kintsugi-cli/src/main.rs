@@ -997,15 +997,42 @@ fn tty_code() -> String {
 
 #[cfg(not(unix))]
 fn confirm_code_on_tty() -> bool {
-    use std::io::Write;
-    // Best effort on non-Unix: prompt and read a line from stdin.
-    print!("Type 'yes' to run it: ");
-    let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_err() {
+    use std::io::{Read, Write};
+    // Read from the real console (CONIN$), not stdin: the agent controls our
+    // stdin, so a stdin read could be auto-answered. CONOUT$/CONIN$ are the
+    // physical console, the Windows analogue of /dev/tty. Fail closed if either
+    // can't be opened (no interactive console → no confirmation possible).
+    let code = tty_code_nonunix();
+    let Ok(mut out) = std::fs::OpenOptions::new().write(true).open("CONOUT$") else {
+        eprintln!(
+            "kintsugi: no console to confirm on — run `kintsugi run` from an interactive terminal."
+        );
         return false;
-    }
-    matches!(line.trim(), "yes" | "YES")
+    };
+    let Ok(mut inp) = std::fs::OpenOptions::new().read(true).open("CONIN$") else {
+        eprintln!(
+            "kintsugi: no console to confirm on — run `kintsugi run` from an interactive terminal."
+        );
+        return false;
+    };
+    let _ = write!(
+        out,
+        "This prompt is Kintsugi (not the agent). To run it, type  {code}  then Enter: "
+    );
+    let _ = out.flush();
+    let mut buf = [0u8; 64];
+    let n = inp.read(&mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n]).trim() == code
+}
+
+/// A short unpredictable code, time-seeded (the console RNG path is Unix-only).
+#[cfg(not(unix))]
+fn tty_code_nonunix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{:04x}", (nanos & 0xffff) as u16)
 }
 
 fn cmd_panic() -> Result<()> {
