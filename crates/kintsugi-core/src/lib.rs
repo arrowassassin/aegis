@@ -19,6 +19,7 @@ pub mod redact;
 pub mod rules;
 pub mod shell;
 pub mod snapshot;
+pub mod taint;
 pub mod types;
 
 pub use log::{ChainStatus, EventLog, Filter, LogError, LoggedEvent, PendingItem, GENESIS_HASH};
@@ -26,6 +27,9 @@ pub use memory::command_hash;
 pub use policy::{adjust_for_policy, Policy, PolicyAction};
 pub use rules::{classify, classify_and_decide, classify_line, decide, RuleMatch};
 pub use snapshot::{capture as capture_snapshot, restore as restore_snapshot, Manifest};
+pub use taint::{
+    evaluate_trifecta, ProvStep, SourceKind, TaintLabel, TaintSet, TaintStore, Trifecta,
+};
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
