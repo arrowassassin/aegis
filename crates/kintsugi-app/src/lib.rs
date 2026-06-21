@@ -17,64 +17,33 @@
 
 #![forbid(unsafe_code)]
 
-use serde::Serialize;
-
 use kintsugi_core::{EventLog, Filter, ProposedCommand, ProvStep};
 use kintsugi_daemon::Client;
 
+// The view-models live in the wasm-safe `kintsugi-app-types` crate so the Dioxus
+// frontend and this native engine share one compiler-checked contract. Re-export
+// them so callers (the Tauri commands) use `kintsugi_app::TimelineRow` directly.
+pub use kintsugi_app_types::{
+    EngineStatus, ProvStep as ProvStepView, ProvenanceView, QueueRow, TimelineRow,
+};
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// One row of the audit timeline — a logged command, shaped for the dashboard.
-/// Mirrors the `.dc.html` timeline columns: when · agent · command · outcome.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TimelineRow {
-    pub id: String,
-    /// RFC3339 timestamp (the frontend localizes it).
-    pub ts: String,
-    pub agent: String,
-    pub session: Option<String>,
-    /// The raw command, verbatim (already secret-redacted at capture).
-    pub command: String,
-    /// `safe` | `ambiguous` | `catastrophic`.
-    pub class: String,
-    /// `allowed` | `denied` | `held` — a word, never color alone.
-    pub outcome: String,
-    /// The rule/resolution reason behind the decision.
-    pub reason: String,
-    /// Whether this row was a taint-driven (lethal-trifecta) block — drives the
-    /// single danger accent on the timeline without an extra round-trip.
-    pub provenance_block: bool,
-    pub risk: Option<u8>,
-}
-
-/// A command held for the human's one-key decision (the approval queue).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct QueueRow {
-    pub id: String,
-    pub ts: String,
-    pub agent: String,
-    pub session: Option<String>,
-    pub command: String,
-    pub class: String,
-    pub reason: String,
-    pub provenance_block: bool,
-}
-
-/// The provenance view for a session: its taint state and the ordered trail (the
-/// forensic "everything descended from source X" chain). `trail` reuses the
-/// daemon's own [`ProvStep`] so the wire shape is identical end-to-end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ProvenanceView {
-    pub session: String,
-    pub tainted: bool,
-    pub trail: Vec<ProvStep>,
-}
-
-/// Top-of-window status: is the engine up, and on which scorer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct EngineStatus {
-    pub running: bool,
-    pub scorer: Option<String>,
+/// Map a daemon `ProvStep` to its wasm-safe view (the enum tag/shape matches; the
+/// `SourceKind` is rendered to its stable token string).
+fn prov_step_view(step: ProvStep) -> ProvStepView {
+    match step {
+        ProvStep::UntrustedRead {
+            source_kind,
+            source_id,
+        } => ProvStepView::UntrustedRead {
+            source_kind: source_kind.as_str().to_string(),
+            source_id,
+        },
+        ProvStep::SensitiveRead { path } => ProvStepView::SensitiveRead { path },
+        ProvStep::EgressSink { target } => ProvStepView::EgressSink { target },
+        ProvStep::RuleFired { rule } => ProvStepView::RuleFired { rule },
+    }
 }
 
 /// Does a logged/queued reason indicate a taint-driven (trifecta) block? The
@@ -145,7 +114,7 @@ pub fn provenance(session: &str, command: Option<&str>) -> anyhow::Result<Proven
     Ok(ProvenanceView {
         session: session.to_string(),
         tainted,
-        trail,
+        trail: trail.into_iter().map(prov_step_view).collect(),
     })
 }
 
@@ -262,11 +231,11 @@ mod tests {
         assert_eq!(json["outcome"], "allowed");
         assert_eq!(json["provenance_block"], false);
 
-        // A provenance view carries the daemon's own ProvStep shape verbatim.
+        // A provenance view carries the shared ProvStep view shape verbatim.
         let view = ProvenanceView {
             session: "s1".into(),
             tainted: true,
-            trail: vec![ProvStep::RuleFired {
+            trail: vec![ProvStepView::RuleFired {
                 rule: "TRIFECTA-01".into(),
             }],
         };

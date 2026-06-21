@@ -1712,12 +1712,21 @@ name = "kintsugi-app"
 version = "0.2.1"
 dependencies = [
  "anyhow",
+ "kintsugi-app-types",
  "kintsugi-core",
  "kintsugi-daemon",
  "serde",
  "serde_json",
  "tempfile",
  "time",
+]
+
+[[package]]
+name = "kintsugi-app-types"
+version = "0.2.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
