@@ -20,7 +20,7 @@ use std::cell::{Cell, RefCell};
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use kintsugi_core::admin::{self, SealedVault, VaultState};
-use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, Verdict};
+use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, TaintEvent, TaintState, Verdict};
 
 pub use ipc::{Client, Observation, Resolution, Server};
 
@@ -107,6 +107,11 @@ pub struct Daemon {
     shutdown: Cell<bool>,
     /// In-memory brute-force throttle for admin authentication.
     throttle: RefCell<AuthThrottle>,
+    /// Session/file information-flow (taint) state for the Provenance feature.
+    /// Event-sourced ([`TaintState`]) so it can be rebuilt by replaying the log
+    /// on a cold start. In-memory today; log persistence lands with the
+    /// taint-event log work (Phase 6 hardening item D).
+    taint: RefCell<TaintState>,
 }
 
 /// Rate-limit + lockout for admin authentication. The daemon is the single
@@ -202,7 +207,26 @@ impl Daemon {
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
+            taint: RefCell::new(TaintState::new()),
         })
+    }
+
+    /// Apply a taint transition to the session/file taint state.
+    ///
+    /// Fed by the content-tool observation surface (Phase 6.2) and by reset
+    /// policy. Pure state update — the decision path consults this; it never lets
+    /// a model change it (spine: rules decide, model only explains). In-memory
+    /// today; persisting these to the append-only log (so taint survives a daemon
+    /// restart via replay) lands with the log-event work — [`TaintState`] already
+    /// supports that replay via `from_events`.
+    pub fn apply_taint(&self, event: &TaintEvent) {
+        self.taint.borrow_mut().apply(event);
+    }
+
+    /// Whether the given session has been influenced by untrusted content. A
+    /// `None` (untracked) session is reported as not tainted.
+    pub fn is_session_tainted(&self, session: Option<&str>) -> bool {
+        self.taint.borrow().is_session_tainted(session)
     }
 
     /// Whether an authenticated shutdown has been accepted (serve loop should exit).

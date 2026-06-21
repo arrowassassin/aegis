@@ -252,6 +252,83 @@ pub enum ProvStep {
     RuleFired { rule: String },
 }
 
+/// A persisted taint transition — the unit of durability.
+///
+/// An ordered stream of these fully determines a [`TaintState`]: replaying them
+/// (e.g. from the append-only event log on a cold start) reconstructs the exact
+/// same state, so a daemon restart never silently loses — or invents — taint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaintEvent {
+    /// Untrusted content entered a session.
+    Ingest { label: TaintLabel },
+    /// A session wrote a file → propagate session taint to the path.
+    WriteFile { session: String, path: PathBuf },
+    /// A session read a file → propagate path taint to the session.
+    ReadFile { session: String, path: PathBuf },
+    /// A policy-driven trust reset cleared a session's taint.
+    Reset { session: String },
+}
+
+/// A durable, event-sourced view of taint state — the daemon's session/file
+/// taint authority. Build it by applying [`TaintEvent`]s; rebuild it identically
+/// by replaying the same ordered stream. Deterministic and I/O-free.
+#[derive(Debug, Default)]
+pub struct TaintState {
+    store: TaintStore,
+}
+
+impl TaintState {
+    /// An empty state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Apply one transition, mutating state. Deterministic and total — never panics.
+    pub fn apply(&mut self, event: &TaintEvent) {
+        match event {
+            TaintEvent::Ingest { label } => self.store.observe_ingest(label.clone()),
+            TaintEvent::WriteFile { session, path } => {
+                self.store.taint_path_from_session(session, path.clone());
+            }
+            TaintEvent::ReadFile { session, path } => {
+                self.store.read_path_into_session(session, path);
+            }
+            TaintEvent::Reset { session } => self.store.reset_session(session),
+        }
+    }
+
+    /// Reconstruct from an ordered event stream (cold-start durability).
+    pub fn from_events<'a, I>(events: I) -> Self
+    where
+        I: IntoIterator<Item = &'a TaintEvent>,
+    {
+        let mut state = Self::new();
+        for event in events {
+            state.apply(event);
+        }
+        state
+    }
+
+    /// Whether the session is currently tainted. A `None` (untracked) session is
+    /// reported as not tainted; callers needing fail-closed semantics decide that
+    /// separately. Convenience over `Option<&str>` since a command's session id is
+    /// optional ([`ProposedCommand::session`](crate::types::ProposedCommand)).
+    pub fn is_session_tainted(&self, session: Option<&str>) -> bool {
+        session.is_some_and(|s| self.store.is_session_tainted(s))
+    }
+
+    /// The session's provenance set, if any.
+    pub fn session_taint(&self, session: &str) -> Option<&TaintSet> {
+        self.store.session_taint(session)
+    }
+
+    /// Whether the path is currently tainted.
+    pub fn is_path_tainted(&self, path: &Path) -> bool {
+        self.store.is_path_tainted(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +490,81 @@ mod tests {
         let json = serde_json::to_string(&step).unwrap();
         assert!(json.contains("\"step\":\"sensitive_read\""));
         assert!(json.contains("~/.aws/credentials")); // identifier only, never contents
+    }
+
+    // --- Event-sourced TaintState ---------------------------------------------
+    #[test]
+    fn apply_ingest_event_taints_the_session() {
+        let mut state = TaintState::new();
+        assert!(!state.is_session_tainted(Some("s")));
+        state.apply(&TaintEvent::Ingest {
+            label: label(SourceKind::Web, "u", "s"),
+        });
+        assert!(state.is_session_tainted(Some("s")));
+    }
+
+    #[test]
+    fn from_events_reconstructs_state_identically() {
+        // Durability: replaying the same ordered stream must reproduce the state
+        // a daemon held before a restart.
+        let events = vec![
+            TaintEvent::Ingest {
+                label: label(SourceKind::Issue, "issue#1", "writer"),
+            },
+            TaintEvent::WriteFile {
+                session: "writer".to_string(),
+                path: PathBuf::from("/work/out.txt"),
+            },
+            TaintEvent::ReadFile {
+                session: "reader".to_string(),
+                path: PathBuf::from("/work/out.txt"),
+            },
+        ];
+        let replayed = TaintState::from_events(&events);
+        assert!(replayed.is_session_tainted(Some("writer")));
+        assert!(replayed.is_path_tainted(Path::new("/work/out.txt")));
+        assert!(replayed.is_session_tainted(Some("reader"))); // propagated through the file
+
+        // Building incrementally yields the same observable state.
+        let mut incremental = TaintState::new();
+        for e in &events {
+            incremental.apply(e);
+        }
+        assert_eq!(
+            incremental.is_session_tainted(Some("reader")),
+            replayed.is_session_tainted(Some("reader"))
+        );
+    }
+
+    #[test]
+    fn reset_event_clears_session_taint() {
+        let mut state = TaintState::new();
+        state.apply(&TaintEvent::Ingest {
+            label: label(SourceKind::Web, "u", "s"),
+        });
+        state.apply(&TaintEvent::Reset {
+            session: "s".to_string(),
+        });
+        assert!(!state.is_session_tainted(Some("s")));
+    }
+
+    #[test]
+    fn none_session_is_never_reported_tainted() {
+        let mut state = TaintState::new();
+        state.apply(&TaintEvent::Ingest {
+            label: label(SourceKind::Web, "u", "s"),
+        });
+        assert!(!state.is_session_tainted(None));
+    }
+
+    #[test]
+    fn taint_event_json_round_trips_with_a_kind_tag() {
+        let event = TaintEvent::Ingest {
+            label: label(SourceKind::Mcp, "tool:fetch", "s"),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"kind\":\"ingest\""));
+        let back: TaintEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
     }
 }

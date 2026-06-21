@@ -28,7 +28,8 @@ pub use policy::{adjust_for_policy, Policy, PolicyAction};
 pub use rules::{classify, classify_and_decide, classify_line, decide, RuleMatch};
 pub use snapshot::{capture as capture_snapshot, restore as restore_snapshot, Manifest};
 pub use taint::{
-    evaluate_trifecta, ProvStep, SourceKind, TaintLabel, TaintSet, TaintStore, Trifecta,
+    evaluate_trifecta, ProvStep, SourceKind, TaintEvent, TaintLabel, TaintSet, TaintState,
+    TaintStore, Trifecta,
 };
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 
