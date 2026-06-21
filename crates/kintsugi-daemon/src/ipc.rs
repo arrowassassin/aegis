@@ -469,10 +469,23 @@ impl Server {
     where
         F: FnMut(Request) -> Response,
     {
-        let req: Request = {
+        // Read the request line directly (rather than via `read_message`) so we can
+        // tell a *benign* zero-byte disconnect — a peer that connected and closed
+        // without sending, e.g. `is_daemon_running`'s liveness probe — apart from a
+        // real protocol error. A probe is not worth logging; treat it as a no-op.
+        let mut line = String::new();
+        let n = {
             let mut reader = bounded(&mut stream);
-            read_message(&mut reader)?
+            reader.read_line(&mut line).context("read IPC message")?
         };
+        if n == 0 {
+            return Ok(()); // connected then closed with no message — nothing to do
+        }
+        if !line.ends_with('\n') && n as u64 >= MAX_FRAME {
+            anyhow::bail!("IPC message exceeds {MAX_FRAME} bytes");
+        }
+        let req: Request =
+            serde_json::from_str(line.trim_end()).context("deserialize IPC message")?;
         let resp = handler(req);
         write_message(&mut stream, &resp)?;
         Ok(())
