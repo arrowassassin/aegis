@@ -85,6 +85,38 @@ fn timeline_row(e: kintsugi_core::LoggedEvent) -> TimelineRow {
     }
 }
 
+/// The timeline EXCLUDING a given agent — used to keep the `fs-watch` backstop
+/// firehose out of the main command feed (the TUI does the same).
+pub fn timeline_excluding(
+    db_path: &std::path::Path,
+    exclude_agent: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<TimelineRow>> {
+    let log = EventLog::open(db_path)?;
+    let filter = Filter {
+        limit: Some(limit),
+        agent_not: Some(exclude_agent.to_string()),
+        ..Default::default()
+    };
+    Ok(log.query(&filter)?.into_iter().map(timeline_row).collect())
+}
+
+/// The timeline for a SINGLE agent — e.g. `fs-watch` (file changes) or `shell`
+/// (the human-session recorder), each its own section like the TUI's tabs.
+pub fn timeline_for_agent(
+    db_path: &std::path::Path,
+    agent: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<TimelineRow>> {
+    let log = EventLog::open(db_path)?;
+    let filter = Filter {
+        limit: Some(limit),
+        agent: Some(agent.to_string()),
+        ..Default::default()
+    };
+    Ok(log.query(&filter)?.into_iter().map(timeline_row).collect())
+}
+
 /// Audit-log search: the timeline filtered by a case-insensitive command substring
 /// (the audit screen's search box). An empty query returns the recent tail.
 pub fn audit(

@@ -1,0 +1,36 @@
+# Kintsugi Control Room — Dioxus DESKTOP app (the real frontend).
+#
+# Runs in ONE process with the engine, so screens call `kintsugi-app` directly —
+# no Tauri, no `invoke`, no WASM, no IPC boundary (that boundary was the source of
+# the click-spinner). This is the design's own target, so the look is 1:1.
+#
+# NOT part of the main workspace: it pulls the platform webview + dioxus-desktop,
+# which CI/headless don't carry. Build on a workstation:
+#   cd desktop-dx && cargo run        # or: dx serve  (cargo install dioxus-cli)
+[workspace]
+
+[package]
+name = "kintsugi-control-room"
+version = "0.2.1"
+edition = "2021"
+description = "Kintsugi Control Room — local-first desktop dashboard for AI-agent command governance."
+license = "MIT"
+
+[dependencies]
+dioxus = { version = "0.6", features = ["desktop"] }
+tokio = { version = "1", features = ["time", "rt", "macros"] }
+anyhow = "1"
+hex = "0.4"
+# The engine + daemon, called directly in-process (no IPC / no invoke).
+kintsugi-app = { path = "../crates/kintsugi-app" }
+kintsugi-daemon = { path = "../crates/kintsugi-daemon" }
+kintsugi-core = { path = "../crates/kintsugi-core" }
+kintsugi-model = { path = "../crates/kintsugi-model" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+
+[package.metadata.dioxus]
+name = "Kintsugi"
