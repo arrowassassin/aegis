@@ -679,6 +679,27 @@ fn program_name(arg0: &str) -> String {
 }
 
 /// Per-program catastrophic detection.
+/// True if this segment removes/uninstalls/disables Kintsugi itself. Covers the
+/// common package-manager uninstalls, the tool's own `uninstall`, and removal of
+/// the installed binaries/shims by path. Deliberately broad (it's a hard floor on
+/// self-removal): when in doubt it errs toward catching the attempt.
+fn removes_kintsugi(prog: &str, args: &[&str], seg: &str) -> bool {
+    let mentions = || args.iter().any(|a| a.contains("kintsugi"));
+    let is = |needles: &[&str]| args.iter().any(|a| needles.contains(a));
+    match prog {
+        "cargo" => is(&["uninstall"]) && mentions(),
+        "brew" | "npm" | "pnpm" | "yarn" => is(&["uninstall", "remove", "rm"]) && mentions(),
+        "pip" | "pip3" | "pipx" => is(&["uninstall"]) && mentions(),
+        // The tool's own teardown: only the human (via the gated CLI) may run it.
+        "kintsugi" => is(&["uninstall"]),
+        // Deleting the installed binaries / shims / data by path.
+        "rm" | "unlink" | "trash" => {
+            seg.contains("kintsugi") && (seg.contains("/bin") || seg.contains("kintsugi/") || seg.contains("shims"))
+        }
+        _ => false,
+    }
+}
+
 fn catastrophic_segment(prog: &str, args: &[&str], seg: &str) -> Option<&'static str> {
     // Match `--flag` whether bare or in GNU `--flag=value` form.
     let has = |flags: &[&str]| {
@@ -696,6 +717,12 @@ fn catastrophic_segment(prog: &str, args: &[&str], seg: &str) -> Option<&'static
             a.len() >= 2 && a.starts_with('-') && !a.starts_with("--") && a[1..].contains(c)
         })
     };
+
+    // Self-protection: an agent must never be able to uninstall or delete its own
+    // guardrail un-prompted. Held in attended mode, denied unattended.
+    if removes_kintsugi(prog, args, seg) {
+        return Some("self-protect:remove-kintsugi");
+    }
 
     match prog {
         "rm" => {
@@ -1598,6 +1625,23 @@ mod tests {
             Class::Catastrophic
         );
         assert_eq!(class_of("git push --force=please"), Class::Catastrophic);
+    }
+
+    #[test]
+    fn self_removal_of_kintsugi_is_catastrophic() {
+        for s in [
+            "cargo uninstall kintsugi",
+            "brew uninstall kintsugi",
+            "npm remove -g kintsugi",
+            "pip uninstall kintsugi",
+            "kintsugi uninstall",
+            "rm /Users/me/.local/bin/kintsugi-daemon",
+            "rm -f ~/.local/share/kintsugi/events.db",
+        ] {
+            assert_eq!(class_of(s), Class::Catastrophic, "must protect against: {s}");
+        }
+        // Uninstalling an unrelated package is not self-protection.
+        assert_ne!(class_of("cargo uninstall ripgrep"), Class::Catastrophic);
     }
 
     #[test]

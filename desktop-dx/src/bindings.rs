@@ -290,6 +290,22 @@ pub fn change_master_password(old: &str, new: &str) -> anyhow::Result<String> {
     }
 }
 
+/// Remove the master password entirely (verify current, then delete the sealed
+/// vault). After this, stopping/loosening Kintsugi no longer needs a password.
+pub fn remove_master_password(current: &str) -> anyhow::Result<()> {
+    match admin::load_vault(&admin::default_vault_path()) {
+        VaultState::Locked(v) => {
+            if !v.verify_password(current) {
+                anyhow::bail!("current password is wrong");
+            }
+            std::fs::remove_file(admin::default_vault_path())
+                .map_err(|e| anyhow::anyhow!("couldn't remove the vault: {e}"))
+        }
+        VaultState::Unprovisioned => anyhow::bail!("no master password is set"),
+        VaultState::Degraded(_) => anyhow::bail!("admin vault is unreadable"),
+    }
+}
+
 // ---- sectioned reads (mirror the TUI; keep fs-watch out of the main feed) ----
 
 /// Agent commands only — the main Activity feed, fs-watch excluded.
@@ -304,10 +320,12 @@ pub fn file_changes(limit: usize) -> Vec<TimelineRow> {
 pub fn shell_log(limit: usize) -> Vec<TimelineRow> {
     newest_first(app::timeline_for_agent(&db(), "shell", limit).unwrap_or_default())
 }
-/// History as a destructive lens: non-safe agent commands (fs-watch excluded).
+/// History as the ENFORCEMENT record: only the commands Kintsugi actually acted
+/// on — held or blocked. This is the distinction from Activity (the full live
+/// feed): History answers "what did Kintsugi catch?", not "what happened?".
 pub fn history(limit: usize) -> Vec<TimelineRow> {
-    let mut rows = app::timeline_excluding(&db(), "fs-watch", 500).unwrap_or_default();
-    rows.retain(|r| r.class != "safe");
+    let mut rows = app::timeline_excluding(&db(), "fs-watch", 800).unwrap_or_default();
+    rows.retain(|r| r.outcome == "held" || r.outcome == "denied");
     rows.reverse(); // newest-first
     rows.truncate(limit); // keep the freshest `limit`, not the oldest
     rows
@@ -337,6 +355,18 @@ pub fn set_model(path: &str) -> anyhow::Result<()> {
 }
 pub fn clear_model() -> anyhow::Result<()> {
     kintsugi_model::config::clear_configured_model().map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Delete a downloaded `.gguf` from disk. If it's the active selection, drop back
+/// to the heuristic first so the daemon doesn't point at a missing file.
+pub fn delete_model_file(path: &str) -> anyhow::Result<()> {
+    let is_active = kintsugi_model::config::configured_model()
+        .map(|p| p.to_string_lossy() == path)
+        .unwrap_or(false);
+    if is_active {
+        let _ = clear_model();
+    }
+    std::fs::remove_file(path).map_err(|e| anyhow::anyhow!("couldn't delete model: {e}"))
 }
 
 /// Is a real GGUF actually loaded by the daemon right now (vs the heuristic)?
@@ -455,5 +485,6 @@ pub fn builtin_protections() -> Vec<(&'static str, &'static str)> {
         ("Disk & device writes", "dd of=, mkfs, writes to /dev/*"),
         ("Infrastructure teardown", "terraform destroy, kubectl delete, docker prune"),
         ("Lethal trifecta", "untrusted content + secret read + egress → blocked"),
+        ("Self-protection", "uninstalling or deleting Kintsugi itself"),
     ]
 }

@@ -799,7 +799,7 @@ pub fn Audit() -> Element {
                 if has_query {
                     span { "Searching the full record — every logged command and agent." }
                 } else {
-                    span { "History — the destructive lens: non-safe commands only. Search to widen to the full record." }
+                    span { "History — only what Kintsugi held or blocked (Activity shows everything). Search to widen to the full record." }
                 }
             }
 
@@ -862,7 +862,7 @@ pub fn Audit() -> Element {
                         } else if has_query {
                             "{total} event(s) · full record · newest first"
                         } else {
-                            "{total} non-safe event(s) · newest first"
+                            "{total} held or blocked · newest first"
                         }
                     }
                     if pages > 1 {
@@ -1537,6 +1537,8 @@ pub fn Settings() -> Element {
 
     // ── model action inline result ──
     let mut model_msg = use_signal(String::new);
+    // Path pending a delete confirmation (two-step, so a 2GB file isn't one click).
+    let mut delete_confirm = use_signal(|| None::<String>);
 
     // The remaining toggles stay store-signal UI (service/admin-path driven).
     let toggles = [
@@ -1680,7 +1682,7 @@ pub fn Settings() -> Element {
                             }
                         }
 
-                        div {
+                        div { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap",
                             button { class: "kn-btn-gold", style: "font-family:inherit;font-size:13px;font-weight:600;color:#1a1206;background:var(--gold);border:none;border-radius:9px;padding:10px 18px;cursor:pointer",
                                 onclick: move |_| {
                                     let cur = pw_cur.read().clone();
@@ -1717,6 +1719,31 @@ pub fn Settings() -> Element {
                                     }
                                 },
                                 if provisioned { "Change password" } else { "Set password" }
+                            }
+                            if provisioned {
+                                button { style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--red);background:transparent;border:1px solid rgba(255,93,93,.35);border-radius:9px;padding:10px 16px;cursor:pointer",
+                                    onclick: move |_| {
+                                        let cur = pw_cur.read().clone();
+                                        if cur.is_empty() {
+                                            pw_err.set("Enter your current password to remove it.".to_string());
+                                            return;
+                                        }
+                                        match crate::bindings::remove_master_password(&cur) {
+                                            Ok(()) => {
+                                                store.session_pw.set(None);
+                                                pw_err.set(String::new());
+                                                pw_cur.set(String::new());
+                                                pw_new.set(String::new());
+                                                pw_confirm.set(String::new());
+                                                pw_modal.set(false);
+                                                let t = *tick.read();
+                                                tick.set(t + 1);
+                                            }
+                                            Err(e) => pw_err.set(e.to_string()),
+                                        }
+                                    },
+                                    "Remove password"
+                                }
                             }
                         }
                     }
@@ -1829,6 +1856,8 @@ pub fn Settings() -> Element {
                             {
                                 let row_st = if m.active { "border-color:var(--gold-line);background:rgba(212,175,55,.05)" } else { "" };
                                 let path = m.path.clone();
+                                let del_path = m.path.clone();
+                                let confirming = delete_confirm.read().as_deref() == Some(m.path.as_str());
                                 rsx! {
                                     div { style: "display:flex;align-items:center;gap:13px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px 14px;{row_st}",
                                         div { style: "flex:1;min-width:0",
@@ -1849,6 +1878,31 @@ pub fn Settings() -> Element {
                                                     }
                                                 },
                                                 "Use this"
+                                            }
+                                        }
+                                        // Two-step delete of the .gguf from disk.
+                                        if confirming {
+                                            button { style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:7px;padding:7px 12px;cursor:pointer",
+                                                onclick: move |_| {
+                                                    match crate::bindings::delete_model_file(&del_path) {
+                                                        Ok(()) => { model_msg.set(format!("Deleted {} from disk.", del_path.rsplit('/').next().unwrap_or(&del_path))); }
+                                                        Err(e) => model_msg.set(format!("Couldn't delete: {e}")),
+                                                    }
+                                                    delete_confirm.set(None);
+                                                    let t = *tick.read(); tick.set(t + 1);
+                                                },
+                                                "Confirm delete"
+                                            }
+                                            button { class: "kn-btn-ghost", style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:7px;padding:7px 10px;cursor:pointer",
+                                                onclick: move |_| delete_confirm.set(None),
+                                                "Cancel"
+                                            }
+                                        } else {
+                                            button { title: "Delete this .gguf from disk", style: "flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;font-family:inherit;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:7px;cursor:pointer",
+                                                onclick: move |_| delete_confirm.set(Some(m.path.clone())),
+                                                svg { view_box: "0 0 24 24", width: "15", height: "15", fill: "none", stroke: "currentColor", stroke_width: "1.7", stroke_linecap: "round", stroke_linejoin: "round",
+                                                    path { d: "M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-8 0v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7" }
+                                                }
                                             }
                                         }
                                     }

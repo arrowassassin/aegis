@@ -30,7 +30,7 @@ impl Screen {
             Feed => ("Activity", "Everything your agents do, as it happens"),
             Provenance => ("Where it came from", "How untrusted content reached a risky command"),
             Recorder => ("Recorder", "Also records what you type in the terminal — no AI needed"),
-            Audit => ("History", "A complete, tamper-proof record you can trust"),
+            Audit => ("History", "What Kintsugi held or blocked — the tamper-proof enforcement record"),
             Policy => ("Rules", "What gets allowed, paused, or blocked"),
             Snapshots => ("Undo", "Restore points saved before anything destructive"),
             Settings => ("Settings", "Protection, recording, and how agents are connected"),
