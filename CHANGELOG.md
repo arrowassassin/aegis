@@ -3,6 +3,17 @@
 All notable changes to Kintsugi are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Provenance (Phase 6)
+- **Durable taint (item D).** Information-flow taint now survives a daemon restart.
+  Each taint transition is persisted to an append-only `taint_events` stream and
+  replayed on `Daemon::open` to reconstruct `TaintState`, closing the
+  fail-open-on-restart gap that the trifecta guard documented (a `kintsugi stop` /
+  watchdog relaunch no longer silently clears taint). `apply_taint` is now
+  persist-then-apply (best-effort persist; never panics, never drops live-session
+  protection). New `EventLog::record_taint_event` / `load_taint_events`.
+
 ## [0.2.1] — 2026-06-17
 
 Pre-rollout security & robustness hardening from an audit. No new features —

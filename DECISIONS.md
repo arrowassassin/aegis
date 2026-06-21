@@ -521,3 +521,12 @@ the locked product decisions this build implements.
   confirm code; and upstream verification of the exact hook payload format for
   Codex / Copilot / Gemini (the adapters are written to the documented shapes but
   not yet round-trip-verified against each upstream).
+- Phase 6 item D (durable taint): persist `TaintEvent`s to an append-only
+  `taint_events` SQLite table and replay them on `Daemon::open` via
+  `TaintState::from_events`, so taint survives a restart (closes the documented
+  fail-open-on-restart gap). The taint stream is operational state — kept
+  append-only but deliberately NOT in the tamper-evident hash chain (it
+  reconstructs runtime state, it is not part of the audit record). `apply_taint`
+  is persist-then-apply, best-effort: a persist failure is logged but never
+  panics or drops protection for the live session. Redacting `source_id` in
+  any agent-facing/log surface remains the separate item G.

@@ -36,3 +36,37 @@ fn daemon_tracks_and_resets_session_taint() {
     });
     assert!(!daemon.is_session_tainted(Some("s1")));
 }
+
+#[test]
+fn taint_survives_a_daemon_restart() {
+    // Item D: taint is persisted to the durable stream and replayed on
+    // Daemon::open, so a stop/start (or a watchdog relaunch) does not silently
+    // clear it — the trifecta guard stays armed across restarts instead of
+    // failing open.
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("e.db");
+
+    {
+        let daemon = Daemon::open(db.clone()).unwrap();
+        daemon.apply_taint(&ingest("s1"));
+        assert!(daemon.is_session_tainted(Some("s1")));
+    } // daemon dropped — simulates `kintsugi stop`
+
+    // Cold start against the same data dir replays the durable taint stream.
+    let daemon = Daemon::open(db.clone()).unwrap();
+    assert!(
+        daemon.is_session_tainted(Some("s1")),
+        "taint must be rebuilt by replay on open (no fail-open-on-restart)"
+    );
+
+    // A persisted Reset is replayed too — taint stays cleared, never resurrected.
+    daemon.apply_taint(&TaintEvent::Reset {
+        session: "s1".to_string(),
+    });
+    drop(daemon);
+    let daemon = Daemon::open(db).unwrap();
+    assert!(
+        !daemon.is_session_tainted(Some("s1")),
+        "a replayed Reset keeps the session clean across a restart"
+    );
+}

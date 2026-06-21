@@ -108,9 +108,10 @@ pub struct Daemon {
     /// In-memory brute-force throttle for admin authentication.
     throttle: RefCell<AuthThrottle>,
     /// Session/file information-flow (taint) state for the Provenance feature.
-    /// Event-sourced ([`TaintState`]) so it can be rebuilt by replaying the log
-    /// on a cold start. In-memory today; log persistence lands with the
-    /// taint-event log work (Phase 6 hardening item D).
+    /// Event-sourced ([`TaintState`]): every transition is persisted to the
+    /// durable taint stream and the state is rebuilt by replaying it on a cold
+    /// start (see [`open`](Self::open)), so taint survives a daemon restart
+    /// (Phase 6 hardening item D — closes the fail-open-on-restart gap).
     taint: RefCell<TaintState>,
 }
 
@@ -196,6 +197,17 @@ impl Daemon {
             VaultState::Unprovisioned => (None, false),
             VaultState::Degraded(_) => (None, true),
         };
+        // Rebuild information-flow taint by replaying the durable taint stream, so
+        // a restart reconstructs taint instead of failing open (Provenance item D).
+        // A load failure degrades to empty taint rather than aborting startup, but
+        // is logged loudly — the base rules and the rest of the daemon still run.
+        let taint = match log.load_taint_events() {
+            Ok(events) => TaintState::from_events(events.iter()),
+            Err(e) => {
+                eprintln!("kintsugi-daemon: failed to replay taint events: {e}");
+                TaintState::new()
+            }
+        };
         Ok(Self {
             log,
             mode: Mode::default(),
@@ -207,7 +219,7 @@ impl Daemon {
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
-            taint: RefCell::new(TaintState::new()),
+            taint: RefCell::new(taint),
         })
     }
 
@@ -215,11 +227,18 @@ impl Daemon {
     ///
     /// Fed by the content-tool observation surface (Phase 6.2) and by reset
     /// policy. Pure state update — the decision path consults this; it never lets
-    /// a model change it (spine: rules decide, model only explains). In-memory
-    /// today; persisting these to the append-only log (so taint survives a daemon
-    /// restart via replay) lands with the log-event work — [`TaintState`] already
-    /// supports that replay via `from_events`.
+    /// a model change it (spine: rules decide, model only explains).
+    ///
+    /// Persist-then-apply: the transition is written to the durable, append-only
+    /// taint stream first (so it survives a daemon restart via replay in
+    /// [`open`](Self::open)), then applied to live in-memory state. The persist is
+    /// best-effort — a write failure is logged but never panics the daemon or
+    /// drops protection for the current session; it only risks losing this taint
+    /// across a future restart.
     pub fn apply_taint(&self, event: &TaintEvent) {
+        if let Err(e) = self.log.record_taint_event(event) {
+            eprintln!("kintsugi-daemon: failed to persist taint event: {e}");
+        }
         self.taint.borrow_mut().apply(event);
     }
 
@@ -234,12 +253,11 @@ impl Daemon {
     /// lethal trifecta and is forced to the catastrophic hard floor. Escalation
     /// only — it can raise the class, never lower it (spine: monotonic caution).
     ///
-    /// The trifecta can fire only when the session is *currently* tainted. NOTE:
-    /// taint is in-memory today (see [`TaintState`]), so a daemon restart resets
-    /// it — until the taint-event log + replay lands (hardening item D), the guard
-    /// is best-effort within a daemon lifetime, not across restarts. This is an
-    /// honest limit (interception, not an unbypassable firewall); the base rules
-    /// still stand regardless.
+    /// The trifecta can fire only when the session is *currently* tainted. Taint
+    /// is durable across daemon restarts (item D): transitions are persisted and
+    /// replayed on [`open`](Self::open), so a restart no longer silently clears it.
+    /// This remains interception, not an unbypassable firewall (e.g. a tool run by
+    /// absolute path can dodge observation); the base rules still stand regardless.
     fn trifecta_floor(
         &self,
         cmd: &ProposedCommand,
