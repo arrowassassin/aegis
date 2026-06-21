@@ -383,6 +383,19 @@ impl SealedVault {
         .is_ok()
     }
 
+    /// Whether this vault carries the v2 asymmetric proof key. A vault provisioned
+    /// before the v2 upgrade has no usable public key, so challenge-response proofs
+    /// ([`verify_proof`](Self::verify_proof)) can never succeed against it — even
+    /// with the correct password. Callers use this to return an actionable
+    /// "re-provision" message instead of a bare authentication failure.
+    pub fn supports_proof(&self) -> bool {
+        hex::decode(&self.auth_pubkey)
+            .ok()
+            .and_then(|b| to_key(&b).ok())
+            .and_then(|a| VerifyingKey::from_bytes(&a).ok())
+            .is_some()
+    }
+
     /// Derive the sealing key from the password (or error on wrong password).
     fn sealing_key(&self, password: &str) -> Result<Zeroizing<[u8; KEY_LEN]>, AdminError> {
         if !self.verify_password(password) {

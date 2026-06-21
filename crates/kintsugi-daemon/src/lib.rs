@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
-use kintsugi_core::admin::{self, SealedVault, VaultState};
+use kintsugi_core::admin::{self, VaultState};
 use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, TaintEvent, TaintState, Verdict};
 
 pub use ipc::{Client, Observation, Resolution, Server};
@@ -94,13 +94,12 @@ pub struct Daemon {
     scorer: Box<dyn kintsugi_model::Scorer>,
     snapshot_dir: PathBuf,
     kill_path: PathBuf,
-    /// The admin vault loaded at *daemon* startup (not at request time), so the
-    /// auth decision is made against the path the daemon resolved — a caller's
-    /// environment can't redirect it. `None` = unprovisioned (no lock).
-    vault: Option<SealedVault>,
-    /// The vault file exists but is unreadable/corrupt → stay locked (fail-closed):
-    /// refuse authenticated shutdown rather than silently allow it.
-    vault_degraded: bool,
+    /// The admin vault **path**, resolved once at daemon startup from the path the
+    /// daemon itself chose (a caller's environment can't redirect it). The vault
+    /// *contents* are read fresh from this path on every privileged op
+    /// ([`current_vault`](Self::current_vault)) — never cached — so a re-provision
+    /// or password change applies immediately, with no restart and no stale-copy bug.
+    vault_path: PathBuf,
     /// The last challenge nonce issued (and its op), consumed once by `Shutdown`.
     pending: RefCell<Option<(Vec<u8>, String)>>,
     /// Set when an authenticated shutdown has been accepted; the serve loop exits.
@@ -193,14 +192,10 @@ impl Daemon {
                 ipc::set_mode(&p, 0o600);
             }
         }
-        // Load the admin vault ONCE, here at daemon startup, from the path the
-        // daemon resolves (the daemon is launched by the admin/systemd, so its
-        // environment — not a later caller's — decides the vault location).
-        let (vault, vault_degraded) = match admin::load_vault(&admin::default_vault_path()) {
-            VaultState::Locked(v) => (Some(*v), false),
-            VaultState::Unprovisioned => (None, false),
-            VaultState::Degraded(_) => (None, true),
-        };
+        // Resolve the admin vault path here at startup (the daemon is launched by
+        // the admin/systemd, so its environment — not a later caller's — decides the
+        // location). The contents are read fresh per op, never cached.
+        let vault_path = admin::default_vault_path();
         // Rebuild information-flow taint by replaying the durable taint stream, so
         // a restart reconstructs taint instead of failing open (Provenance item D).
         // A load failure degrades to empty taint rather than aborting startup, but
@@ -218,8 +213,7 @@ impl Daemon {
             scorer: kintsugi_model::default_scorer(),
             snapshot_dir,
             kill_path,
-            vault,
-            vault_degraded,
+            vault_path,
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
@@ -353,16 +347,22 @@ impl Daemon {
         self.shutdown.get()
     }
 
+    /// Read the current admin vault, fresh from the daemon-resolved path. Called on
+    /// every privileged op so a re-provision / password change applies immediately —
+    /// the daemon is the authority on the *path* (a caller can't redirect it), and
+    /// the contents are never cached, so there is no stale-vault class of bug.
+    fn current_vault(&self) -> VaultState {
+        admin::load_vault(&self.vault_path)
+    }
+
     /// Issue a challenge for a privileged op. `locked=false` means no vault, so the
     /// caller may proceed without a proof.
     fn auth_begin(&self, op: &str) -> ipc::Response {
-        if self.vault_degraded {
-            return ipc::Response::Error {
+        match self.current_vault() {
+            VaultState::Degraded(_) => ipc::Response::Error {
                 message: "admin vault is degraded; refusing privileged operations".into(),
-            };
-        }
-        match &self.vault {
-            Some(v) => {
+            },
+            VaultState::Locked(v) => {
                 let nonce = match admin::random_auth_nonce() {
                     Ok(n) => n,
                     Err(_) => {
@@ -380,7 +380,7 @@ impl Daemon {
                     params,
                 }
             }
-            None => ipc::Response::Challenge {
+            VaultState::Unprovisioned => ipc::Response::Challenge {
                 locked: false,
                 nonce: String::new(),
                 salt: String::new(),
@@ -389,19 +389,23 @@ impl Daemon {
         }
     }
 
-    /// Complete an authenticated shutdown. Enforced against the daemon's own vault.
+    /// Complete an authenticated shutdown. Enforced against the daemon's own vault,
+    /// read fresh from disk so a just-provisioned vault is honored without a restart.
     fn shutdown_op(&self, op: &str, nonce_hex: &str, proof_hex: &str) -> ipc::Response {
-        if self.vault_degraded {
-            self.record_admin(op, false, "vault degraded");
-            return ipc::Response::Error {
-                message: "admin vault is degraded; refusing to stop".into(),
-            };
-        }
-        let Some(vault) = &self.vault else {
+        let vault = match self.current_vault() {
+            VaultState::Degraded(_) => {
+                self.record_admin(op, false, "vault degraded");
+                return ipc::Response::Error {
+                    message: "admin vault is degraded; refusing to stop".into(),
+                };
+            }
             // Unprovisioned: there is no lock, so a clean shutdown is allowed.
-            self.record_admin(op, true, "unprovisioned");
-            self.shutdown.set(true);
-            return ipc::Response::Ack;
+            VaultState::Unprovisioned => {
+                self.record_admin(op, true, "unprovisioned");
+                self.shutdown.set(true);
+                return ipc::Response::Ack;
+            }
+            VaultState::Locked(v) => v,
         };
         // Brute-force lockout: after repeated failures, refuse without even
         // checking the proof until the window elapses (the attempt is still
@@ -432,6 +436,19 @@ impl Daemon {
             ipc::Response::Ack
         } else {
             self.throttle.borrow_mut().record_failure();
+            // Distinguish a wrong password from a vault that simply can't carry a
+            // proof (provisioned before the asymmetric-auth scheme): the latter
+            // fails for *every* password, so a bare "authentication failed" reads
+            // as a bug. Point the user at the one-line fix instead.
+            if !vault.supports_proof() {
+                self.record_admin(op, false, "vault missing proof key");
+                return ipc::Response::Error {
+                    message:
+                        "admin vault has no auth key — re-run `kintsugi admin provision --force` \
+                              (the daemon picks it up immediately, no restart needed)"
+                            .into(),
+                };
+            }
             self.record_admin(op, false, "authentication failed");
             ipc::Response::Error {
                 message: "authentication failed".into(),

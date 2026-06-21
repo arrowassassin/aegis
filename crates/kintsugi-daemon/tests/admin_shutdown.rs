@@ -174,6 +174,110 @@ fn repeated_failures_lock_out_brute_force() {
 }
 
 #[test]
+fn a_vault_provisioned_after_startup_is_honored_without_a_restart() {
+    // The trap that bit in practice: the daemon used to read the vault only at
+    // startup, so a `kintsugi admin provision` after the fact silently didn't apply
+    // until a restart. The daemon now reads the vault fresh per op.
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let vault = tmp.path().join("vault.json");
+    let db = tmp.path().join("events.db");
+    std::env::set_var("KINTSUGI_VAULT", &vault);
+    std::env::set_var("KINTSUGI_DB", &db);
+
+    // Daemon starts with NO vault (unprovisioned).
+    let daemon = Daemon::open(&db).unwrap();
+
+    // Provision AFTER startup — no restart.
+    provision_at(&vault, "correct horse battery");
+
+    // The daemon now reports locked (it re-read the vault) and the correct proof
+    // stops it — proving it authenticates against the freshly provisioned vault.
+    let (locked, nonce, salt, params) = challenge(daemon.handle_request(ipc::Request::AuthBegin {
+        op: "shutdown".into(),
+    }));
+    assert!(
+        locked,
+        "a vault provisioned after startup must lock the daemon"
+    );
+    let nonce_bytes = hex::decode(&nonce).unwrap();
+    let good = admin::compute_proof(
+        "correct horse battery",
+        &salt,
+        params,
+        &nonce_bytes,
+        b"shutdown",
+    )
+    .unwrap();
+    let resp = daemon.handle_request(ipc::Request::Shutdown {
+        op: "shutdown".into(),
+        nonce,
+        proof: hex::encode(good),
+    });
+    assert!(matches!(resp, ipc::Response::Ack));
+    assert!(daemon.should_shutdown());
+
+    std::env::remove_var("KINTSUGI_VAULT");
+    std::env::remove_var("KINTSUGI_DB");
+}
+
+#[test]
+fn a_reprovision_rotates_credentials_live_without_a_restart() {
+    // Re-provisioning (e.g. to fix a vault that predated the proof scheme) takes
+    // effect on the running daemon: the old password stops working, the new one
+    // works — no restart, no stale-vault confusion.
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let vault = tmp.path().join("vault.json");
+    let db = tmp.path().join("events.db");
+    provision_at(&vault, "old password one");
+    std::env::set_var("KINTSUGI_VAULT", &vault);
+    std::env::set_var("KINTSUGI_DB", &db);
+
+    let daemon = Daemon::open(&db).unwrap();
+
+    // Rotate to a new password while the daemon runs.
+    provision_at(&vault, "new password two");
+
+    // The OLD password no longer authenticates (verified against the new vault).
+    let (_l, nonce, salt, params) = challenge(daemon.handle_request(ipc::Request::AuthBegin {
+        op: "shutdown".into(),
+    }));
+    let nb = hex::decode(&nonce).unwrap();
+    let old = admin::compute_proof("old password one", &salt, params, &nb, b"shutdown").unwrap();
+    let resp = daemon.handle_request(ipc::Request::Shutdown {
+        op: "shutdown".into(),
+        nonce: nonce.clone(),
+        proof: hex::encode(old),
+    });
+    assert!(
+        matches!(resp, ipc::Response::Error { .. }),
+        "old password must fail"
+    );
+    assert!(!daemon.should_shutdown());
+
+    // The NEW password does — live, no restart.
+    let (_l, nonce, salt, params) = challenge(daemon.handle_request(ipc::Request::AuthBegin {
+        op: "shutdown".into(),
+    }));
+    let nb = hex::decode(&nonce).unwrap();
+    let new = admin::compute_proof("new password two", &salt, params, &nb, b"shutdown").unwrap();
+    let resp = daemon.handle_request(ipc::Request::Shutdown {
+        op: "shutdown".into(),
+        nonce,
+        proof: hex::encode(new),
+    });
+    assert!(
+        matches!(resp, ipc::Response::Ack),
+        "new password must stop it"
+    );
+    assert!(daemon.should_shutdown());
+
+    std::env::remove_var("KINTSUGI_VAULT");
+    std::env::remove_var("KINTSUGI_DB");
+}
+
+#[test]
 fn unprovisioned_daemon_stops_without_a_password() {
     let _g = serial_lock();
     let tmp = tempfile::tempdir().unwrap();
