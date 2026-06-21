@@ -1492,13 +1492,21 @@ pub fn Settings() -> Element {
         let _ = tick();
         let _ = store.slow_tick.read();
         tokio::task::spawn_blocking(|| {
-            (crate::bindings::installed_model(), crate::bindings::scorer_summary())
+            (
+                crate::bindings::installed_model(),
+                crate::bindings::scorer_summary(),
+                crate::bindings::available_models(),
+                crate::bindings::model_loaded(),
+            )
         })
         .await
-        .unwrap_or((None, "Engine offline".to_string()))
+        .unwrap_or((None, "Engine offline".to_string(), Vec::new(), false))
     });
-    let (installed_model, scorer_summary) = model_res().unwrap_or((None, String::new()));
-    let has_model = installed_model.is_some();
+    let (installed_model, scorer_summary, local_models, model_active) =
+        model_res().unwrap_or((None, String::new(), Vec::new(), false));
+    // A selection is set but the daemon hasn't loaded THAT model yet → restart needed.
+    let model_configured_not_loaded = installed_model.is_some() && !model_active;
+    let mut restart_pending = use_signal(|| false);
 
     // Whether a master-password vault exists → set vs change form.
     let vault_res = use_resource(move || async move {
@@ -1728,7 +1736,7 @@ pub fn Settings() -> Element {
                     }
                     div { style: "flex:1",
                         div { style: "font-size:14px;font-weight:700",
-                            if has_model { "Local model active" } else { "Heuristic scorer · offline" }
+                            if model_active { "Local model active" } else if model_configured_not_loaded { "Model selected — restart to load" } else { "Heuristic scorer · offline" }
                         }
                         // The real "model summary" the user said was missing.
                         div { style: "font-size:12.5px;color:var(--dim);margin-top:2px;line-height:1.5", "{scorer_summary}" }
@@ -1754,7 +1762,8 @@ pub fn Settings() -> Element {
                             onclick: move |_| {
                                 match crate::bindings::clear_model() {
                                     Ok(()) => {
-                                        model_msg.set("Removed — back to the heuristic scorer.".to_string());
+                                        model_msg.set("Removed — restart to drop back to the heuristic scorer.".to_string());
+                                        restart_pending.set(true);
                                         let t = *tick.read();
                                         tick.set(t + 1);
                                     }
@@ -1785,33 +1794,63 @@ pub fn Settings() -> Element {
                     }
                 }
 
-                div { style: "display:flex;flex-direction:column;gap:9px",
-                    for m in data::models().into_iter().filter(|m| search.is_empty() || m.id.to_lowercase().contains(&search)) {
-                        {
-                            // A model is "active" iff its name matches the real installed file.
-                            let name = data::model_name(m.id);
-                            let publisher = data::model_publisher(m.id);
-                            let active = installed_model
-                                .as_deref()
-                                .map(|f| f.to_lowercase().contains(&name.to_lowercase()))
-                                .unwrap_or(false);
-                            let row_st = if active { "border-color:var(--gold-line);background:rgba(212,175,55,.05)" } else { "" };
-                            rsx! {
-                                div { style: "display:flex;align-items:center;gap:13px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px 14px;{row_st}",
-                                    div { style: "flex:1;min-width:0",
-                                        div { style: "display:flex;align-items:center;gap:8px",
-                                            if m.recommended { span { style: "font-size:12px;color:var(--gold)", "★" } }
-                                            span { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{name}" }
+                // Restart-to-apply: changing the selection needs a daemon reload.
+                if *restart_pending.read() || model_configured_not_loaded {
+                    div { style: "border:1px solid var(--gold-line);border-radius:10px;background:rgba(212,175,55,.07);padding:12px 15px;margin-bottom:14px;display:flex;align-items:center;gap:12px",
+                        span { style: "font-size:12.5px;color:var(--ink);flex:1;line-height:1.45", "Your model choice is saved. Restart Kintsugi so the daemon loads it (a few seconds)." }
+                        button { class: "kn-btn-gold", style: "flex:none;font-family:inherit;font-size:12.5px;font-weight:600;color:#1a1206;background:var(--gold);border:none;border-radius:8px;padding:9px 14px;cursor:pointer",
+                            onclick: move |_| {
+                                let pw = store.session_pw.peek().clone();
+                                let res = match pw {
+                                    Some(p) => crate::bindings::restart_engine_with_password(&p),
+                                    None => crate::bindings::start_engine(),
+                                };
+                                match res {
+                                    Ok(()) => { restart_pending.set(false); model_msg.set("Restarted — the daemon is loading your model.".to_string()); }
+                                    Err(e) => model_msg.set(format!("Restart failed: {e}")),
+                                }
+                                let t = *tick.read(); tick.set(t + 1);
+                            },
+                            "Restart to apply"
+                        }
+                    }
+                }
+
+                // Real downloaded models on disk — selectable (no mock catalog).
+                if local_models.is_empty() {
+                    div { style: "font-size:12.5px;color:var(--dim);line-height:1.5;border:1px dashed var(--line);border-radius:10px;padding:14px",
+                        "No .gguf models found on disk. Download one with "
+                        span { style: "font-family:'IBM Plex Mono',monospace;color:var(--ink)", "kintsugi model pick" }
+                        " in your terminal, then it'll appear here to select."
+                    }
+                } else {
+                    div { style: "display:flex;flex-direction:column;gap:9px",
+                        for m in local_models.iter().filter(|m| search.is_empty() || m.name.to_lowercase().contains(&search)).cloned() {
+                            {
+                                let row_st = if m.active { "border-color:var(--gold-line);background:rgba(212,175,55,.05)" } else { "" };
+                                let path = m.path.clone();
+                                rsx! {
+                                    div { style: "display:flex;align-items:center;gap:13px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px 14px;{row_st}",
+                                        div { style: "flex:1;min-width:0",
+                                            span { style: "display:block;font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{m.name}" }
+                                            div { style: "font-size:11.5px;color:var(--dim);margin-top:3px", "{m.size} · on disk" }
                                         }
-                                        div { style: "font-size:11.5px;color:var(--dim);margin-top:3px", "{publisher} · {m.quant} · {m.size} · {m.downloads} downloads" }
-                                    }
-                                    if active {
-                                        span { style: "flex:none;font-size:12.5px;font-weight:600;color:var(--green);display:inline-flex;align-items:center;gap:6px",
-                                            svg { view_box: "0 0 24 24", width: "14", height: "14", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", path { d: "M20 6L9 17l-5-5" } }
-                                            "Active"
+                                        if m.active {
+                                            span { style: "flex:none;font-size:12.5px;font-weight:600;color:var(--green);display:inline-flex;align-items:center;gap:6px",
+                                                svg { view_box: "0 0 24 24", width: "14", height: "14", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", path { d: "M20 6L9 17l-5-5" } }
+                                                "Selected"
+                                            }
+                                        } else {
+                                            button { class: "kn-btn-ghost", style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:7px;padding:7px 13px;cursor:pointer",
+                                                onclick: move |_| {
+                                                    match crate::bindings::set_model(&path) {
+                                                        Ok(()) => { model_msg.set("Selected — restart to load.".to_string()); restart_pending.set(true); let t = *tick.read(); tick.set(t + 1); }
+                                                        Err(e) => model_msg.set(format!("Couldn't select: {e}")),
+                                                    }
+                                                },
+                                                "Use this"
+                                            }
                                         }
-                                    } else {
-                                        span { style: "flex:none;font-size:11.5px;color:var(--dim);font-family:'IBM Plex Mono',monospace;white-space:nowrap", "kintsugi model pick" }
                                     }
                                 }
                             }
@@ -1822,13 +1861,13 @@ pub fn Settings() -> Element {
                 div { style: "font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:13px;border-left:2px solid var(--gold);padding-left:12px",
                     "A model you pick is your choice — trusted because you selected it. The daemon never downloads on its own."
                 }
-                // Honest note: downloading a model is a CLI step, not faked here.
+                // Honest note: download is still a CLI step; selection + on/off are live here.
                 div { style: "font-size:11px;color:var(--dim);line-height:1.5;margin-top:8px;display:inline-flex;align-items:flex-start;gap:6px",
                     span { style: "color:var(--amber)", "ⓘ" }
                     span {
-                        "To install a new model, run "
+                        "Selecting and turning the model on/off works here. To download a NEW model, run "
                         span { style: "font-family:'IBM Plex Mono',monospace;color:var(--ink)", "kintsugi model pick" }
-                        " in your terminal — it fetches and points Kintsugi at the .gguf. The active one above reflects that choice."
+                        " — it fetches the .gguf, which then appears in the list above."
                     }
                 }
             }

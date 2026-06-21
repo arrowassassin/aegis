@@ -339,6 +339,87 @@ pub fn clear_model() -> anyhow::Result<()> {
     kintsugi_model::config::clear_configured_model().map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+/// Is a real GGUF actually loaded by the daemon right now (vs the heuristic)?
+/// This is the source of truth — a configured model is NOT necessarily loaded
+/// (the daemon needs the `llama` build + a restart to pick it up).
+pub fn model_loaded() -> bool {
+    matches!(kintsugi_daemon::Client::status_scorer(), Ok(n) if n.starts_with("llama:"))
+}
+
+/// One downloaded model file found on disk.
+#[derive(Clone, PartialEq)]
+pub struct LocalModel {
+    pub name: String,
+    pub path: String,
+    pub size: String,
+    pub active: bool,
+}
+
+/// Where weights may live: the parent of the configured model, plus the default
+/// dir `pick-model.sh` uses (`$KINTSUGI_MODEL_DIR` or `~/.local/share/kintsugi/models`).
+fn model_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(p) = kintsugi_model::config::configured_model().and_then(|p| p.parent().map(|x| x.to_path_buf())) {
+        dirs.push(p);
+    }
+    if let Ok(d) = std::env::var("KINTSUGI_MODEL_DIR") {
+        dirs.push(PathBuf::from(d));
+    } else if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/share/kintsugi/models"));
+    }
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+fn human_size(bytes: u64) -> String {
+    let gb = bytes as f64 / 1e9;
+    if gb >= 1.0 { format!("{gb:.1} GB") } else { format!("{:.0} MB", bytes as f64 / 1e6) }
+}
+
+/// Scan disk for the user's real downloaded `.gguf` models (no mock catalog).
+pub fn available_models() -> Vec<LocalModel> {
+    let active = kintsugi_model::config::configured_model().map(|p| p.to_string_lossy().to_string());
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<LocalModel> = Vec::new();
+    for dir in model_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("gguf") {
+                continue;
+            }
+            let ps = path.to_string_lossy().to_string();
+            if !seen.insert(ps.clone()) {
+                continue;
+            }
+            out.push(LocalModel {
+                name: path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
+                size: e.metadata().ok().map(|m| human_size(m.len())).unwrap_or_default(),
+                active: active.as_deref() == Some(ps.as_str()),
+                path: ps,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Restart the daemon (stop + start) so a model selection takes effect. Uses the
+/// session password for the authenticated shutdown.
+pub fn restart_engine_with_password(password: &str) -> anyhow::Result<()> {
+    if kintsugi_daemon::Client::is_daemon_running() {
+        stop_engine_with_password(password)?;
+        for _ in 0..120 {
+            if !kintsugi_daemon::Client::is_daemon_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    start_engine()
+}
+
 // ---- policy / rules (the Rules screen) -------------------------------------
 
 #[derive(Clone, PartialEq)]
