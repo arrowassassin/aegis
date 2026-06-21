@@ -1708,6 +1708,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kintsugi-app"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "kintsugi-core",
+ "kintsugi-daemon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+]
+
+[[package]]
 name = "kintsugi-core"
 version = "0.2.1"
 dependencies = [

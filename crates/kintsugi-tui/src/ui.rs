@@ -570,6 +570,15 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
         label("reason"),
         Span::raw(ev.reason.clone()),
     ]));
+    // Provenance (Phase 6): name a taint-driven block as such, so a trifecta hold
+    // reads as "untrusted content reached a sink", not a bare rule code. Glyph +
+    // word, danger accent — never color alone (the design-system rule).
+    if let Some(tag) = provenance_tag(&ev.reason) {
+        lines.push(Line::from(vec![
+            label("provenance"),
+            Span::styled(tag, accent_fg(app, DANGER).add_modifier(Modifier::BOLD)),
+        ]));
+    }
     if let Some(summary) = &ev.summary {
         // The model summary may carry "• " pointer lines (newline-separated);
         // a single Span won't break on '\n', so render each line on its own —
@@ -614,6 +623,16 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
         // high, so it reads as a meter — not a full-width block that overruns.
         f.render_widget(gauge, gauge_rect(area));
     }
+}
+
+/// A human label for a taint-driven block, derived from the rule reason the daemon
+/// logged. The trifecta rules tag their reason `TRIFECTA-0x:provenance (…)`, so the
+/// timeline can name a provenance block without an extra IPC round-trip. `None` for
+/// an ordinary row.
+fn provenance_tag(reason: &str) -> Option<&'static str> {
+    reason
+        .contains("TRIFECTA")
+        .then_some("lethal-trifecta block — untrusted content reached a sink")
 }
 
 /// A bounded, single-row sub-rect for the risk meter inside its reserved area.
@@ -699,6 +718,15 @@ mod tests {
     use kintsugi_core::{EventLog, ProposedCommand, Verdict};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    #[test]
+    fn provenance_tag_names_a_trifecta_block_only() {
+        // A taint-driven block is labelled; ordinary rows carry no tag.
+        assert!(provenance_tag("TRIFECTA-01:provenance (ambiguous:curl)").is_some());
+        assert!(provenance_tag("TRIFECTA-02:provenance (sink)").is_some());
+        assert_eq!(provenance_tag("catastrophic:rm-rf"), None);
+        assert_eq!(provenance_tag("memory:allow (safe:ls)"), None);
+    }
 
     #[test]
     fn gauge_rect_is_bounded_and_single_row() {

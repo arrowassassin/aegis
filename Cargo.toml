@@ -7,6 +7,7 @@ members = [
     "crates/kintsugi-cli",
     "crates/kintsugi-model",
     "crates/kintsugi-tui",
+    "crates/kintsugi-app",
 ]
 
 [workspace.package]
