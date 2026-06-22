@@ -6228,7 +6228,24 @@
                 </div>
                 <p
                     style="
-                        margin: 18px auto 0;
+                        margin: 14px auto 0;
+                        font-size: 12.5px;
+                        color: var(--dim);
+                        max-width: 640px;
+                    "
+                >
+                    <strong style="color: var(--ink)">First open on macOS:</strong>
+                    the build isn't notarized yet, so right-click the app &rarr;
+                    <strong style="color: var(--ink)">Open</strong>. If macOS says it's
+                    &ldquo;damaged&rdquo;, clear the download quarantine once:
+                    <code
+                        style="font-family: 'IBM Plex Mono', monospace; color: var(--gold-bright)"
+                        >xattr -dr com.apple.quarantine /Applications/Kintsugi.app</code
+                    >
+                </p>
+                <p
+                    style="
+                        margin: 12px auto 0;
                         font-size: 12.5px;
                         color: var(--dim);
                     "
