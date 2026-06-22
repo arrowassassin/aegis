@@ -558,6 +558,12 @@ pub fn download_model(id: &str) -> anyhow::Result<String> {
     Ok(filename)
 }
 
+/// Drop every still-pending entry from the queue (orphan recovery). Returns the
+/// number pruned. Use after the spine fix to clear the historical backlog.
+pub fn prune_pending() -> anyhow::Result<u64> {
+    kintsugi_daemon::Client::prune_pending()
+}
+
 // ---- agent hooks (Settings: list + per-CLI on/off + refresh) --------------
 
 #[derive(Clone, PartialEq, serde::Deserialize)]

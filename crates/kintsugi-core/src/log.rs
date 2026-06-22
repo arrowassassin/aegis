@@ -378,6 +378,19 @@ impl EventLog {
         }
     }
 
+    /// Drop every still-pending queue entry without writing an audit row per
+    /// one — the bulk recovery path for orphaned holds (e.g. an ambiguous
+    /// command that the agent's native prompt approved without anyone calling
+    /// `resolve_pending`). Returns the number of entries pruned. This does NOT
+    /// alter the immutable audit log; it just clears the "needs your decision"
+    /// queue, which is a derived view.
+    pub fn prune_pending(&self) -> Result<u64, LogError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM pending WHERE status = 'pending'", [])?;
+        Ok(n as u64)
+    }
+
     /// List the still-pending queued commands, oldest first.
     pub fn list_pending(&self) -> Result<Vec<PendingItem>, LogError> {
         let mut stmt = self.conn.prepare(

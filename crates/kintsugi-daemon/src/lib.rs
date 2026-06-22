@@ -157,6 +157,25 @@ impl AuthThrottle {
     }
 }
 
+/// Does THIS held command need a daemon-side queue entry?
+///
+/// Catastrophic always does (the dialect maps Hold→Deny so the agent can't
+/// resolve it). Ambiguous needs one ONLY for agents whose CLI lacks a native
+/// "ask" prompt (Gemini, Antigravity) — for those, the dialect also maps
+/// Hold→Deny, so the user has nowhere else to approve it.
+///
+/// For agents with native ask (Claude, Qwen, Copilot, Cursor, Codex, OpenCode),
+/// an ambiguous hold is the agent's own y/N prompt — enqueueing here would
+/// produce an orphan no one ever clears.
+fn needs_queue_entry(cmd: &ProposedCommand, class: kintsugi_core::Class) -> bool {
+    if class == kintsugi_core::Class::Catastrophic {
+        return true;
+    }
+    // Ambiguous: only agents WITHOUT a native "ask" leave the user nowhere
+    // else to resolve it.
+    matches!(cmd.agent.as_str(), "gemini" | "antigravity")
+}
+
 impl Daemon {
     /// Open the daemon backed by the event log at `db_path`, creating parent dirs.
     pub fn open(db_path: impl Into<PathBuf>) -> Result<Self> {
@@ -628,7 +647,7 @@ impl Daemon {
                 );
             }
         }
-        if verdict.decision == Decision::Hold {
+        if verdict.decision == Decision::Hold && needs_queue_entry(&cmd, verdict.class) {
             if let Err(e) = self
                 .log
                 .enqueue_pending(&cmd, verdict.class, &verdict.reason)
@@ -902,6 +921,10 @@ impl Daemon {
             },
             ipc::Request::Approve { id } => self.resolve_pending_response(&id, Decision::Allow),
             ipc::Request::Deny { id } => self.resolve_pending_response(&id, Decision::Deny),
+            ipc::Request::PrunePending => match self.log.prune_pending() {
+                Ok(n) => ipc::Response::Pending { status: n.to_string() },
+                Err(e) => ipc::Response::Error { message: e.to_string() },
+            },
             ipc::Request::Status => ipc::Response::Status {
                 scorer: self.scorer_name().to_string(),
             },

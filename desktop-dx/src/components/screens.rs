@@ -571,7 +571,7 @@ fn class_style(class: &str) -> (&'static str, &'static str) {
 
 #[component]
 pub fn Held() -> Element {
-    let store = use_store();
+    let mut store = use_store();
     // Local tick re-runs the resource right after a resolve(); the global tick
     // keeps the list live. The queue read runs OFF the UI thread.
     let mut tick = use_signal(|| 0u32);
@@ -583,8 +583,34 @@ pub fn Held() -> Element {
     let loading = rows().is_none();
     let rows = rows().unwrap_or_default();
 
+    let total_pending = rows.len();
     rsx! {
         div { style: "padding:26px;max-width:920px;{FADE}",
+
+            // Bulk recovery: prune every stale "pending" entry left over by older
+            // ambiguous holds an agent's native prompt approved. The spine fix in
+            // the daemon prevents new ones; this is the cleanup for the backlog.
+            if total_pending > 10 {
+                div { style: "display:flex;align-items:center;gap:13px;margin-bottom:18px;border:1px solid rgba(212,175,55,.4);border-radius:10px;background:linear-gradient(90deg,rgba(212,175,55,.07),transparent);padding:11px 15px",
+                    span { style: "flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:rgba(212,175,55,.13);color:var(--gold);font-weight:700", "!" }
+                    div { style: "flex:1;font-size:12.5px;line-height:1.45;color:var(--ink)",
+                        "{total_pending} entries in the queue. Many are likely orphans (an agent's own prompt allowed them) — Kintsugi no longer enqueues those, but the backlog stayed."
+                    }
+                    button {
+                        style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:8px;padding:8px 13px;cursor:pointer",
+                        onclick: move |_| {
+                            match crate::bindings::prune_pending() {
+                                Ok(n) => {
+                                    store.toast(crate::state::ToastKind::Success, format!("Cleared {n} stale entries."));
+                                    let t = *tick.read(); tick.set(t + 1);
+                                }
+                                Err(e) => { store.toast(crate::state::ToastKind::Error, format!("Couldn't clear: {e}")); }
+                            }
+                        },
+                        "Clear stale"
+                    }
+                }
+            }
 
             if loading {
                 Loader { label: "Loading the review queue…".to_string() }

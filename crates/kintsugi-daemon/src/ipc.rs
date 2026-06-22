@@ -56,6 +56,9 @@ pub enum Request {
     Approve { id: String },
     /// "A human denied this queued command id."
     Deny { id: String },
+    /// "Drop every still-pending entry from the queue without recording an audit
+    /// row per one — the bulk recovery for orphaned holds."
+    PrunePending,
     /// "What is the daemon's runtime status?" — currently the active scorer, so
     /// callers can tell whether the local model loaded or it's on the heuristic
     /// fallback.
@@ -308,6 +311,17 @@ impl Client {
     /// Deny a queued command.
     pub fn deny(id: &str) -> Result<()> {
         expect_ack(round_trip(&Request::Deny { id: id.to_string() })?)
+    }
+
+    /// Prune every still-pending entry from the queue without recording a
+    /// human:deny per one — recovery for orphaned holds. Returns the count
+    /// pruned (reported by the daemon via a `Pending { status: "N" }` reply).
+    pub fn prune_pending() -> Result<u64> {
+        match round_trip(&Request::PrunePending)? {
+            Response::Pending { status } => status.parse().map_err(|e| anyhow::anyhow!("bad count: {e}")),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            _ => anyhow::bail!("unexpected response to PrunePending"),
+        }
     }
 
     /// The daemon's active scorer backend id (e.g. `heuristic` or
