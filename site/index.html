@@ -262,10 +262,6 @@
                 }
             }
             @media (max-width: 600px) {
-                /* Let fixed-width flex *rows* (not inline-flex chips) wrap. */
-                #kk-root [style*="display: flex"] {
-                    flex-wrap: wrap;
-                }
                 /* Tame the largest display type so headlines don't overflow. */
                 #kk-root h1 {
                     font-size: clamp(30px, 9vw, 46px) !important;
@@ -276,6 +272,22 @@
                 }
                 #kk-root h3 {
                     font-size: clamp(17px, 5vw, 22px) !important;
+                }
+                /* Hero "filmstrip" demo: the 5 labelled chapter buttons + the
+                   fixed-width scrubber are too dense for a phone. Drop the chapter
+                   text labels (their dots remain as a compact timeline) and let the
+                   progress track take the freed width. */
+                #kk-root [data-anim^="chLbl"] {
+                    display: none !important;
+                }
+                #kk-root [data-act="seekTrack"] {
+                    width: auto !important;
+                    flex: 1 1 60px !important;
+                }
+                /* The stage is 480px tall for a wide desktop card; on a phone that
+                   leaves a lot of empty gradient above the content — trim it. */
+                #kk-root [style*="height: 480px"] {
+                    height: 380px !important;
                 }
             }
         </style>
