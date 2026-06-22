@@ -359,6 +359,12 @@ mod tests {
         );
     }
 
+    // Unix-only: the inputs are Unix-absolute paths (leading `/`). On Windows
+    // those are NOT absolute (`Path::is_absolute()` needs a drive/UNC), so they
+    // resolve against the workspace and read as in-workspace — a different path
+    // model than this case exercises. The Windows forms (`…\Downloads\`,
+    // `…\AppData\Local\Temp\`) are handled by `is_download_or_temp`'s `\…\` arms.
+    #[cfg(unix)]
     #[test]
     fn out_of_workspace_reads_are_untrusted() {
         // A downloaded artifact → Download.

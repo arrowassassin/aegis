@@ -8,3 +8,8 @@ Cargo.lock.orig
 # Playwright MCP screenshot output
 .playwright-mcp/
 tour-nav-light.png
+
+#Desktop App
+desktop-dx/dist/*
+desktop-dx/src-tauri/*
+desktop-dx/target/*

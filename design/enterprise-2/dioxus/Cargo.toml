@@ -1,0 +1,21 @@
+[package]
+name = "kintsugi-control-room"
+version = "0.1.0"
+edition = "2021"
+description = "Kintsugi enterprise control room — Dioxus desktop port of the HTML design"
+
+[dependencies]
+# Desktop target renders through a webview, so the original inline-style /
+# CSS-variable design system carries over 1:1. Swap features for web/mobile.
+dioxus = { version = "0.6", features = ["desktop"] }
+# Drives the simulated model-download progress timer.
+tokio = { version = "1", features = ["time"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+
+# `dx serve` / `dx build` use this. Install the CLI with:  cargo install dioxus-cli
+[package.metadata.dioxus]
+name = "Kintsugi"

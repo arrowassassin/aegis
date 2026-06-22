@@ -62,31 +62,86 @@ pub fn spool_path() -> PathBuf {
 const FENCE_BEGIN: &str = "# >>> kintsugi session recorder >>>";
 const FENCE_END: &str = "# <<< kintsugi session recorder <<<";
 
+/// Gated variant of the recorder hook. Same fences as `HOOK`, so it cleanly
+/// replaces the passive block on a re-install. Synchronously runs the gate
+/// before each command — describes (model summary), confirms risky, declines
+/// catastrophic. The gate itself fails open (daemon down / no TTY → exit 0).
+///
+/// zsh: rebinds Enter (`^M`) to a ZLE widget that runs the gate, then either
+/// `.accept-line`s the buffer or clears it. bash: enables `extdebug` so a
+/// nonzero DEBUG trap return prevents the next command from running.
+const HOOK_GATE: &str = r#"# >>> kintsugi session recorder >>>
+# GATED recorder: describes every command and asks before running risky ones.
+# Tier-1 safe stays silent. Remove this block to stop gating + recording.
+_kintsugi_skip() {
+  case "$1" in
+    *kintsugi*|"") return 0 ;;
+  esac
+  return 1
+}
+if [ -n "$ZSH_VERSION" ]; then
+  _kintsugi_gate_accept() {
+    local cmd="$BUFFER"
+    if _kintsugi_skip "$cmd"; then
+      zle .accept-line
+      return
+    fi
+    if command kintsugi ingest --gate --cwd "$PWD" -- "$cmd"; then
+      zle .accept-line
+    else
+      BUFFER=""
+      zle reset-prompt
+    fi
+  }
+  zle -N _kintsugi_gate_accept
+  bindkey '^M' _kintsugi_gate_accept
+elif [ -n "$BASH_VERSION" ]; then
+  shopt -s extdebug 2>/dev/null   # so a nonzero DEBUG trap return cancels the next command
+  _kintsugi_gate_bash() {
+    [ -n "$COMP_LINE" ] && return 0
+    [ -n "$_KINTSUGI_IN_PROMPT" ] && return 0
+    case "$BASH_COMMAND" in _kintsugi_*) return 0 ;; esac
+    if _kintsugi_skip "$BASH_COMMAND"; then return 0; fi
+    command kintsugi ingest --gate --cwd "$PWD" -- "$BASH_COMMAND"
+  }
+  PROMPT_COMMAND="_KINTSUGI_IN_PROMPT=1${PROMPT_COMMAND:+; $PROMPT_COMMAND}; _KINTSUGI_IN_PROMPT="
+  trap '_kintsugi_gate_bash' DEBUG
+fi
+# <<< kintsugi session recorder <<<"#;
+
 /// `kintsugi record install` — print the hook (default), or with `--write <rc>`
-/// install it as an idempotent, fenced block in that file.
-pub fn install(write: Option<PathBuf>) -> Result<()> {
+/// install it as an idempotent, fenced block in that file. With `--gate`, install
+/// the gated variant that describes commands and confirms risky ones.
+pub fn install(write: Option<PathBuf>, gate: bool) -> Result<()> {
+    let hook = if gate { HOOK_GATE } else { HOOK };
+    let kind = if gate {
+        "gated recorder"
+    } else {
+        "passive recorder"
+    };
     let Some(rc) = write else {
         // Default: print to stdout so it composes with a redirect, and never touch
         // the user's rc ourselves — that's their file to own.
-        println!("{HOOK}");
+        println!("{hook}");
         eprintln!(
             "# Appended nothing yet — pipe this into your shell rc, e.g.:\n\
-             #   kintsugi record install >> ~/.bashrc   # or ~/.zshrc\n\
-             # (or let Kintsugi manage it: `kintsugi record install --write ~/.bashrc`)\n\
-             # then restart your shell. Verify with `kintsugi record status`."
+             #   kintsugi record install{gate_flag} >> ~/.bashrc   # or ~/.zshrc\n\
+             # (or let Kintsugi manage it: `kintsugi record install{gate_flag} --write ~/.bashrc`)\n\
+             # then restart your shell. Verify with `kintsugi record status`.",
+            gate_flag = if gate { " --gate" } else { "" }
         );
         return Ok(());
     };
     let existing = std::fs::read_to_string(&rc).unwrap_or_default();
-    let (replaced, body) = replace_block(&existing, Some(HOOK));
+    let (replaced, body) = replace_block(&existing, Some(hook));
     atomic_write(&rc, &body)?;
     println!(
-        "✓ {} the Kintsugi recorder block in {}",
+        "✓ {} the Kintsugi {kind} block in {}",
         if replaced { "updated" } else { "installed" },
         rc.display()
     );
     println!(
-        "  Restart your shell (or `source {}`) to start recording.",
+        "  Restart your shell (or `source {}`) to start.",
         rc.display()
     );
     Ok(())
@@ -248,6 +303,117 @@ pub fn ingest(command: &str, cwd: Option<PathBuf>) -> Result<()> {
         let _ = append_spool(&cmd);
     }
     Ok(())
+}
+
+/// `kintsugi ingest --gate` — describe a command before it runs and (for the
+/// ambiguous/catastrophic band) ask the user via /dev/tty whether to proceed.
+/// Returns:
+///   * `Ok(0)` for safe/allow → the shell may run the command.
+///   * `Ok(1)` for deny → the shell should NOT run the command.
+///
+/// Never crashes the shell: a parse error, daemon outage, or no TTY all fall
+/// back to passive recording + exit 0 (i.e. the existing behavior).
+pub fn ingest_gate(command: &str, cwd: Option<PathBuf>) -> Result<i32> {
+    use kintsugi_core::{Class, Decision};
+    use std::io::Write;
+
+    let command = command.trim();
+    if command.is_empty() {
+        return Ok(0);
+    }
+    let cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    let red = kintsugi_core::redact::redact_command(command);
+    let (text, argv) = if red.any() {
+        (red.text.clone(), kintsugi_core::shell::split(&red.text))
+    } else {
+        (command.to_string(), kintsugi_core::shell::split(command))
+    };
+    let cmd = ProposedCommand::new("shell", cwd, argv, text);
+
+    // Score synchronously. If the daemon is down, fall back to passive (record
+    // via spool, allow) — the gate must never be the reason a normal shell
+    // command can't run.
+    let Ok(verdict) = Client::send(&cmd) else {
+        let _ = append_spool(&cmd);
+        return Ok(0);
+    };
+
+    // Safe → silently allow (matches the existing recorder UX).
+    if verdict.class == Class::Safe {
+        let _ = Client::record(&cmd);
+        return Ok(0);
+    }
+
+    // Describe to the user. The model's summary is the "plain English" part the
+    // user explicitly wanted; we name Kintsugi so the prompt is unmistakable.
+    let class_word = match verdict.class {
+        Class::Catastrophic => "catastrophic",
+        Class::Ambiguous => "ambiguous",
+        Class::Safe => "safe",
+    };
+    let summary = verdict
+        .summary
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(verdict.reason.as_str());
+
+    // /dev/tty so the prompt survives the shell trap's redirected stdout.
+    let mut tty_w = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok();
+    let Some(ref mut tty) = tty_w else {
+        // No interactive terminal (script / non-TTY) → revert to passive record.
+        let _ = Client::record(&cmd);
+        return Ok(0);
+    };
+
+    let _ = writeln!(tty, "\n\x1b[1;33m⚠ Kintsugi\x1b[0m {class_word}: {summary}");
+    if let Some(risk) = verdict.risk {
+        let _ = writeln!(tty, "   risk {risk}/100");
+    }
+    // Catastrophic: never ask — print and decline.
+    if verdict.class == Class::Catastrophic {
+        let _ = writeln!(
+            tty,
+            "   declined — catastrophic commands aren't gated through y/n."
+        );
+        let _ = writeln!(tty, "   re-run via `kintsugi run` if you really mean it.");
+        let _ = Client::record(&cmd);
+        return Ok(1);
+    }
+    let _ = write!(tty, "   run it anyway? [y/N] ");
+    let _ = tty.flush();
+    let mut line = String::new();
+    let mut buf = [0u8; 1];
+    while line.len() < 8 {
+        match std::io::Read::read(tty, &mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                if buf[0] == b'\n' {
+                    break;
+                }
+                line.push(buf[0] as char);
+            }
+            Err(_) => break,
+        }
+    }
+    let yes = matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+
+    if !yes {
+        // Record the (denied) decision so the audit log reflects reality.
+        let mut declined = cmd.clone();
+        declined.raw = format!("[user declined] {}", declined.raw);
+        let _ = Client::record(&declined);
+        return Ok(1);
+    }
+    // Approved: record and allow.
+    let _ = Client::record(&cmd);
+    let _ = verdict.decision; // suppresses any unused-binding warnings on this path
+    let _: Decision = verdict.decision;
+    Ok(0)
 }
 
 /// Append one command to the spool (newline-delimited JSON), best-effort. The

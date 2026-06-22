@@ -69,10 +69,20 @@ jobs:
       #     arg-dispatch shells, run at the process level, not line-attributable;
       #   - `kintsugi-tui/src/lib.rs`: the ratatui run-loop + terminal init/teardown,
       #     which needs a real PTY (the TUI *logic* in app.rs/ui.rs is ~90-95%);
-      #   - `kintsugi-model/src/manage.rs`: GGUF model download/install (network).
-      # TODO(post-0.1): add a PTY harness for the run-loop and restore toward 90.
-      - run: cargo llvm-cov --workspace --summary-only --fail-under-lines 87 --ignore-filename-regex '(kintsugi-daemon/src/main\.rs|/src/bin/|kintsugi-tui/src/lib\.rs|kintsugi-model/src/manage\.rs)'
-      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --ignore-filename-regex '(kintsugi-daemon/src/main\.rs|/src/bin/|kintsugi-tui/src/lib\.rs|kintsugi-model/src/manage\.rs)'
+      #   - `kintsugi-model/src/manage.rs`: GGUF model download/install (network);
+      #   - `kintsugi-cli/src/uninstall.rs`: destructive teardown (removes the
+      #     installed binaries + shims, stops the daemon) — can't be safely run in CI;
+      #   - `kintsugi-cli/src/model_cmd.rs`: GGUF select/download/delete CLI (shells
+      #     to the picker, hits the network/disk) — same class as `manage.rs`;
+      #   - `kintsugi-cli/src/record.rs`: the recorder's pre-exec gate drives
+      #     `/dev/tty` interactively — needs a real PTY, same as the TUI run-loop;
+      #   - `kintsugi-app/src/lib.rs`: the desktop GUI's data-binding layer, exercised
+      #     by the `desktop-dx/` app (a separate workspace not built in CI), exactly
+      #     like `kintsugi-tui/src/lib.rs`.
+      # TODO(post-0.1): add a PTY harness for the run-loop + recorder gate, and
+      # integration-test the uninstall/model paths in a throwaway container.
+      - run: cargo llvm-cov --workspace --summary-only --fail-under-lines 87 --ignore-filename-regex '(kintsugi-daemon/src/main\.rs|/src/bin/|kintsugi-tui/src/lib\.rs|kintsugi-model/src/manage\.rs|kintsugi-cli/src/uninstall\.rs|kintsugi-cli/src/model_cmd\.rs|kintsugi-cli/src/record\.rs|kintsugi-app/src/lib\.rs)'
+      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --ignore-filename-regex '(kintsugi-daemon/src/main\.rs|/src/bin/|kintsugi-tui/src/lib\.rs|kintsugi-model/src/manage\.rs|kintsugi-cli/src/uninstall\.rs|kintsugi-cli/src/model_cmd\.rs|kintsugi-cli/src/record\.rs|kintsugi-app/src/lib\.rs)'
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov

@@ -1,0 +1,18 @@
+[package]
+name = "kintsugi-app-types"
+description = "Wasm-safe UI view-model types shared by the Kintsugi data-binding engine and the Dioxus frontend — the compile-checked data contract between them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Pure data + serde only — no rusqlite, no sockets — so it compiles to wasm32 for
+# the Dioxus frontend AND links into the native engine. This is the whole point:
+# one set of types, checked by the compiler on both sides of `invoke`.
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -56,6 +56,9 @@ pub enum Request {
     Approve { id: String },
     /// "A human denied this queued command id."
     Deny { id: String },
+    /// "Drop every still-pending entry from the queue without recording an audit
+    /// row per one — the bulk recovery for orphaned holds."
+    PrunePending,
     /// "What is the daemon's runtime status?" — currently the active scorer, so
     /// callers can tell whether the local model loaded or it's on the heuristic
     /// fallback.
@@ -68,8 +71,11 @@ pub enum Request {
     /// "Here is the challenge proof for `op`; do it." Currently only shutdown.
     Shutdown {
         op: String,
-        nonce: String,
-        proof: String,
+        /// The challenge nonce + proof (hex). `None` on the unauthenticated path
+        /// (no vault provisioned) — modeled as absence, NOT an empty string, so
+        /// no placeholder ever flows into the proof-verification crypto sink.
+        nonce: Option<String>,
+        proof: Option<String>,
     },
 }
 
@@ -310,6 +316,19 @@ impl Client {
         expect_ack(round_trip(&Request::Deny { id: id.to_string() })?)
     }
 
+    /// Prune every still-pending entry from the queue without recording a
+    /// human:deny per one — recovery for orphaned holds. Returns the count
+    /// pruned (reported by the daemon via a `Pending { status: "N" }` reply).
+    pub fn prune_pending() -> Result<u64> {
+        match round_trip(&Request::PrunePending)? {
+            Response::Pending { status } => status
+                .parse()
+                .map_err(|e| anyhow::anyhow!("bad count: {e}")),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            _ => anyhow::bail!("unexpected response to PrunePending"),
+        }
+    }
+
     /// The daemon's active scorer backend id (e.g. `heuristic` or
     /// `llama:<model>`). Lets callers report whether the local model is loaded.
     pub fn status_scorer() -> Result<String> {
@@ -334,13 +353,15 @@ impl Client {
         }
     }
 
-    /// Complete an authenticated shutdown with a challenge proof (hex). On success
-    /// the daemon records the event and exits.
-    pub fn shutdown(op: &str, nonce: &str, proof: &str) -> Result<()> {
+    /// Complete a shutdown. Pass `Some(nonce_hex)` + `Some(proof_hex)` for the
+    /// authenticated path (a provisioned vault); pass `None`/`None` when no vault
+    /// is set and no proof is required. Absence is modeled as `None`, never an
+    /// empty string, so a placeholder can't be mistaken for a real nonce.
+    pub fn shutdown(op: &str, nonce: Option<&str>, proof: Option<&str>) -> Result<()> {
         expect_ack(round_trip(&Request::Shutdown {
             op: op.to_string(),
-            nonce: nonce.to_string(),
-            proof: proof.to_string(),
+            nonce: nonce.map(str::to_string),
+            proof: proof.map(str::to_string),
         })?)
     }
 
@@ -469,10 +490,23 @@ impl Server {
     where
         F: FnMut(Request) -> Response,
     {
-        let req: Request = {
+        // Read the request line directly (rather than via `read_message`) so we can
+        // tell a *benign* zero-byte disconnect — a peer that connected and closed
+        // without sending, e.g. `is_daemon_running`'s liveness probe — apart from a
+        // real protocol error. A probe is not worth logging; treat it as a no-op.
+        let mut line = String::new();
+        let n = {
             let mut reader = bounded(&mut stream);
-            read_message(&mut reader)?
+            reader.read_line(&mut line).context("read IPC message")?
         };
+        if n == 0 {
+            return Ok(()); // connected then closed with no message — nothing to do
+        }
+        if !line.ends_with('\n') && n as u64 >= MAX_FRAME {
+            anyhow::bail!("IPC message exceeds {MAX_FRAME} bytes");
+        }
+        let req: Request =
+            serde_json::from_str(line.trim_end()).context("deserialize IPC message")?;
         let resp = handler(req);
         write_message(&mut stream, &resp)?;
         Ok(())

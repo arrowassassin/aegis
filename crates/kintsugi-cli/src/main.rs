@@ -12,6 +12,7 @@ mod model_cmd;
 mod record;
 mod service;
 mod shell_enforce;
+mod uninstall;
 mod watcher;
 
 use std::io::IsTerminal;
@@ -51,6 +52,10 @@ enum Command {
         /// changes that bypass interception, so undo stays complete).
         #[arg(long)]
         no_watch: bool,
+        /// Skip the desktop Control Room step (don't register or offer to build
+        /// the GUI app). Useful on headless/server hosts.
+        #[arg(long)]
+        no_desktop: bool,
     },
     /// Show daemon, socket, log, and interception status.
     Status,
@@ -224,6 +229,14 @@ enum Command {
         /// The working directory it ran in (defaults to the current dir).
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Pre-exec gate: classify the command, describe it (with the local
+        /// model's summary), and for the ambiguous band ask y/N via /dev/tty
+        /// before it runs. Exit 0 = allow, 1 = deny. Catastrophic commands are
+        /// always declined (re-run via `kintsugi run`). On daemon outage or no
+        /// TTY this falls back to passive recording + exit 0 — the gate never
+        /// breaks a normal shell.
+        #[arg(long)]
+        gate: bool,
     },
     /// Manage the optional Tier-2 local model: which GGUF the daemon loads, and
     /// (for `cargo install` users) building the inference engine. Kintsugi always
@@ -245,6 +258,31 @@ enum Command {
         #[command(flatten)]
         filter: FilterArgs,
     },
+    /// Install the desktop Control Room app — finds `kintsugi-control-room` on
+    /// PATH and invokes its `--install` flag (which writes the .app bundle on
+    /// macOS, the .desktop entry + hicolor icons on Linux, or the Programs
+    /// folder + Start-menu shortcut on Windows). Run this after
+    /// `cargo install kintsugi-control-room` for a complete OS install.
+    InstallDesktop,
+    /// Manage agent-CLI hooks (claude-code, qwen, gemini, copilot, cursor, codex,
+    /// opencode, antigravity). `list` shows detection + install state (JSON with
+    /// `--json`), `enable`/`disable` flip one agent's hook.
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
+    /// Cleanly remove Kintsugi: stop the daemon, strip the agent hooks, remove the
+    /// shim dir and the installed binaries. Your stored data (event log, vault,
+    /// model selection) is KEPT unless you pass `--purge`. Gated by the admin
+    /// password when one is set. Shows a plan and asks before doing anything.
+    Uninstall {
+        /// Also erase all stored data (events.db, the sealed vault, model config).
+        #[arg(long)]
+        purge: bool,
+        /// Skip the interactive confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// `kintsugi record` subcommands (passive session recorder).
@@ -258,6 +296,12 @@ enum RecordCmd {
         /// re-running replaces the existing block rather than duplicating it).
         #[arg(long, value_name = "RC_FILE")]
         write: Option<PathBuf>,
+        /// Install the GATED recorder: every command is classified before it runs;
+        /// risky ones are described (with the local model's summary) and require
+        /// y/N confirmation; catastrophic commands are declined. The gate fails
+        /// open — daemon down or no TTY behaves like the passive recorder.
+        #[arg(long)]
+        gate: bool,
     },
     /// Remove the shell hook — with `--write <rc>`, delete the managed block from
     /// that file; otherwise print how to remove it by hand.
@@ -291,6 +335,13 @@ enum ModelCmd {
     /// Forget the configured model; the daemon falls back to the always-on
     /// heuristic scorer. Restarts a running daemon.
     Remove,
+    /// Delete a downloaded GGUF file from disk (frees the space). Accepts a
+    /// filename in the models dir, a substring, or an absolute path. If it was the
+    /// active model, also forgets it (back to heuristic).
+    Rm {
+        /// Model filename / substring / absolute path to the `.gguf`.
+        name: String,
+    },
 }
 
 /// `kintsugi admin` subcommands.
@@ -352,6 +403,29 @@ enum ServiceCmd {
     Uninstall,
     /// Show whether the auto-restart service is installed.
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum HookCmd {
+    /// List detected agents + whether the Kintsugi hook is installed. With
+    /// `--json`, emit a machine-readable array for the desktop UI.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Wire the Kintsugi hook into one detected agent.
+    Enable {
+        /// Agent id (e.g. claude-code, qwen, gemini, copilot, cursor, codex,
+        /// opencode, antigravity).
+        #[arg(long)]
+        agent: String,
+    },
+    /// Strip the Kintsugi hook from one detected agent. Leaves the agent's other
+    /// hooks untouched.
+    Disable {
+        #[arg(long)]
+        agent: String,
+    },
 }
 
 /// Shared filter flags for `log`, `redact`, and `purge`.
@@ -463,12 +537,13 @@ fn main() -> Result<()> {
             print_path,
             enterprise,
             no_watch,
+            no_desktop,
         }) => {
             if print_path {
                 println!("export PATH=\"{}:$PATH\"", shim_dir().display());
                 Ok(())
             } else {
-                cmd_init(no_daemon, enterprise, no_watch)
+                cmd_init(no_daemon, enterprise, no_watch, no_desktop)
             }
         }
         Some(Command::Status) => cmd_status(),
@@ -521,7 +596,7 @@ fn main() -> Result<()> {
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
         Some(Command::Record { cmd }) => match cmd {
-            RecordCmd::Install { write } => record::install(write),
+            RecordCmd::Install { write, gate } => record::install(write, gate),
             RecordCmd::Uninstall { write } => record::uninstall(write),
             RecordCmd::Status => record::status(),
         },
@@ -531,13 +606,296 @@ fn main() -> Result<()> {
             ModelCmd::Pick => model_cmd::pick(),
             ModelCmd::Install => model_cmd::install(),
             ModelCmd::Remove => model_cmd::remove(),
+            ModelCmd::Rm { name } => model_cmd::rm(&name),
         },
-        Some(Command::Ingest { command, cwd }) => record::ingest(&command, cwd),
+        Some(Command::Ingest { command, cwd, gate }) => {
+            if gate {
+                std::process::exit(record::ingest_gate(&command, cwd)?);
+            } else {
+                record::ingest(&command, cwd)
+            }
+        }
         Some(Command::Report {
             catastrophic_only,
             number,
             filter,
         }) => cmd_report(catastrophic_only, number, &filter),
+        Some(Command::Uninstall { purge, yes }) => uninstall::run(purge, yes),
+        Some(Command::Hook { cmd }) => cmd_hook(cmd),
+        Some(Command::InstallDesktop) => cmd_install_desktop(),
+    }
+}
+
+/// `kintsugi install-desktop` — find the `kintsugi-control-room` binary
+/// (PATH, then ~/.cargo/bin) and invoke its `--install` flag.
+fn cmd_install_desktop() -> Result<()> {
+    let bin = which_kintsugi_control_room().ok_or_else(|| {
+        anyhow::anyhow!(
+            "couldn't find the desktop binary `kintsugi-control-room` on PATH.\n\n\
+         Install it first, then re-run this:\n  \
+         cargo install kintsugi-control-room\n  \
+         kintsugi install-desktop\n\n\
+         Or download a prebuilt build from https://github.com/arrowassassin/kintsugi/releases."
+        )
+    })?;
+    println!("kintsugi: running {} --install", bin.display());
+    let status = std::process::Command::new(&bin).arg("--install").status()?;
+    if !status.success() {
+        anyhow::bail!("the desktop installer exited with status {status}");
+    }
+    Ok(())
+}
+
+/// Complete the "install everything" promise during `kintsugi init`: register the
+/// desktop Control Room app, building it first if it isn't installed yet.
+///
+/// `cargo install kintsugi` only produces the CLI binaries — the GUI is a heavier
+/// crate (Dioxus + a system webview) that's kept separate so a CLI/headless
+/// install never has to pull GUI system libraries. So the end-to-end "install the
+/// desktop too" lives here, one step after the binary the user already ran:
+///   * already on PATH (a package install, or `cargo install kintsugi-control-room`)
+///     → just register it with the OS;
+///   * absent, interactive shell with a toolchain → offer to build it from the
+///     repo, then register;
+///   * absent, headless/no-toolchain (or the user declines) → print how to add it
+///     later and move on. This NEVER fails init.
+fn ensure_desktop_app() {
+    // Already installed? Register the OS integration (idempotent) and we're done.
+    if let Some(bin) = which_kintsugi_control_room() {
+        match std::process::Command::new(&bin).arg("--install").status() {
+            Ok(s) if s.success() => {
+                println!("  ✓ desktop: Control Room app registered");
+            }
+            _ => println!(
+                "  • desktop: found {} but couldn't register it — run `kintsugi install-desktop`",
+                bin.display()
+            ),
+        }
+        return;
+    }
+
+    let manual = format!(
+        "add it later with:\n      \
+         cargo install --git https://github.com/{UPDATE_REPO} kintsugi-control-room\n      \
+         kintsugi install-desktop\n    \
+         (or download a .dmg/.msi/.deb from https://github.com/{UPDATE_REPO}/releases)"
+    );
+
+    // Not present. Building the GUI from source is a one-time, multi-minute job that
+    // needs a C toolchain (and, on Linux, the webkit dev libs), so we ask first —
+    // `confirm` returns false on a non-interactive/headless host, which degrades to
+    // "just tell them how", never a surprise build or a failure.
+    let build = confirm(
+        "Desktop Control Room app isn't installed. Build & install it now? (one-time, a few minutes)",
+    )
+    .unwrap_or(false);
+    if !build {
+        println!("  • desktop: skipped — {manual}");
+        return;
+    }
+
+    println!("  … building the desktop Control Room app (one-time; this can take a few minutes)…");
+    let built = std::process::Command::new("cargo")
+        .args([
+            "install",
+            "--git",
+            &format!("https://github.com/{UPDATE_REPO}"),
+            "--locked",
+            "kintsugi-control-room",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !built {
+        println!(
+            "  • desktop: build didn't complete (needs a C toolchain; on Linux \
+             libwebkit2gtk-4.1-dev). {manual}"
+        );
+        return;
+    }
+    match which_kintsugi_control_room() {
+        Some(bin) => {
+            let _ = std::process::Command::new(&bin).arg("--install").status();
+            println!("  ✓ desktop: Control Room app built and registered");
+        }
+        None => println!(
+            "  • desktop: built, but couldn't find it to register — run `kintsugi install-desktop`"
+        ),
+    }
+}
+
+fn which_kintsugi_control_room() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "kintsugi-control-room.exe"
+    } else {
+        "kintsugi-control-room"
+    };
+    if let Some(paths) = std::env::var_os("PATH") {
+        for d in std::env::split_paths(&paths) {
+            let c = d.join(name);
+            if c.exists() {
+                return Some(c);
+            }
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        for sub in [".cargo/bin", ".local/bin"] {
+            let c = PathBuf::from(&home).join(sub).join(name);
+            if c.exists() {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// The on-disk config path Kintsugi writes/strips per agent.
+fn agent_config_path(home: &std::path::Path, kind: init::HookKind) -> std::path::PathBuf {
+    use init::HookKind::*;
+    match kind {
+        Claude => home.join(".claude/settings.json"),
+        Qwen => home.join(".qwen/settings.json"),
+        Gemini => home.join(".gemini/settings.json"),
+        Cursor => home.join(".cursor/hooks.json"),
+        Copilot => home.join(".copilot/hooks/kintsugi.json"),
+        Codex => home.join(".codex/config.toml"),
+        OpenCode => home.join(".config/opencode/plugin/kintsugi.js"),
+        Antigravity => home.join(".gemini/antigravity-cli/plugins/kintsugi/hooks.json"),
+    }
+}
+
+/// True if the agent's config currently contains a Kintsugi hook entry.
+fn agent_hook_installed(home: &std::path::Path, kind: init::HookKind) -> bool {
+    let path = agent_config_path(home, kind);
+    match std::fs::read_to_string(&path) {
+        Ok(s) => s.contains("kintsugi"),
+        Err(_) => false,
+    }
+}
+
+/// Recursively drop any JSON array element that mentions "kintsugi".
+fn scrub_kintsugi(v: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    match v {
+        serde_json::Value::Array(arr) => {
+            let before = arr.len();
+            arr.retain(|el| !el.to_string().contains("kintsugi"));
+            changed |= arr.len() != before;
+            for el in arr.iter_mut() {
+                changed |= scrub_kintsugi(el);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values_mut() {
+                changed |= scrub_kintsugi(val);
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+fn unwire_hook(home: &std::path::Path, kind: init::HookKind) -> Result<()> {
+    use init::HookKind::*;
+    let path = agent_config_path(home, kind);
+    match kind {
+        // Files Kintsugi owns wholesale → delete.
+        Copilot | OpenCode | Antigravity => {
+            if path.is_file() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("remove {}", path.display()))?;
+            }
+            Ok(())
+        }
+        // JSON files we merged into → scrub.
+        Claude | Qwen | Gemini | Cursor => {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return Ok(());
+            };
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                return Ok(());
+            };
+            if scrub_kintsugi(&mut v) {
+                write_file(&path, &serde_json::to_string_pretty(&v)?)?;
+            }
+            Ok(())
+        }
+        // TOML: drop any line mentioning kintsugi (best-effort).
+        Codex => {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return Ok(());
+            };
+            let kept: Vec<&str> = text.lines().filter(|l| !l.contains("kintsugi")).collect();
+            write_file(&path, &kept.join("\n"))
+        }
+    }
+}
+
+fn cmd_hook(cmd: HookCmd) -> Result<()> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("could not resolve $HOME"))?;
+    let agents = init::detect_agents(&home);
+
+    match cmd {
+        HookCmd::List { json } => {
+            #[derive(serde::Serialize)]
+            struct HookEntry {
+                id: &'static str,
+                name: &'static str,
+                installed: bool,
+                config_path: String,
+            }
+            let entries: Vec<HookEntry> = agents
+                .iter()
+                .filter_map(|a| match a.via {
+                    init::Interception::Hook(kind) => Some(HookEntry {
+                        id: a.id,
+                        name: a.name,
+                        installed: agent_hook_installed(&home, kind),
+                        config_path: agent_config_path(&home, kind).display().to_string(),
+                    }),
+                    init::Interception::Mcp => None,
+                })
+                .collect();
+            if json {
+                println!("{}", serde_json::to_string(&entries)?);
+            } else {
+                if entries.is_empty() {
+                    println!("kintsugi: no agent CLIs detected.");
+                    return Ok(());
+                }
+                for e in &entries {
+                    let mark = if e.installed {
+                        "✓ installed"
+                    } else {
+                        "•   off    "
+                    };
+                    println!("  {mark}  {:20}  {}", e.name, e.config_path);
+                }
+            }
+            Ok(())
+        }
+        HookCmd::Enable { agent } => {
+            let Some(a) = agents.iter().find(|x| x.id == agent) else {
+                anyhow::bail!("no agent matching '{agent}' — try `kintsugi hook list`");
+            };
+            let init::Interception::Hook(kind) = a.via else {
+                anyhow::bail!("{} doesn't use a native hook", a.name);
+            };
+            wire_hook(kind, Some(&home))?;
+            println!("✓ enabled {} hook", a.name);
+            Ok(())
+        }
+        HookCmd::Disable { agent } => {
+            let Some(a) = agents.iter().find(|x| x.id == agent) else {
+                anyhow::bail!("no agent matching '{agent}' — try `kintsugi hook list`");
+            };
+            let init::Interception::Hook(kind) = a.via else {
+                anyhow::bail!("{} doesn't use a native hook", a.name);
+            };
+            unwire_hook(&home, kind)?;
+            println!("✓ disabled {} hook", a.name);
+            Ok(())
+        }
     }
 }
 
@@ -1242,7 +1600,7 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf())
 }
 
-fn shim_dir() -> PathBuf {
+pub(crate) fn shim_dir() -> PathBuf {
     // `KINTSUGI_DATA_DIR` overrides the platform data dir (deterministic in tests and
     // portable across OSes, where `directories` resolves the data dir differently).
     if let Ok(dir) = std::env::var("KINTSUGI_DATA_DIR") {
@@ -1254,7 +1612,7 @@ fn shim_dir() -> PathBuf {
     std::env::temp_dir().join("kintsugi-shims")
 }
 
-fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
+fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool, no_desktop: bool) -> Result<()> {
     println!(
         "kintsugi init{}",
         if enterprise { " (enterprise)" } else { "" }
@@ -1346,6 +1704,16 @@ fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
             Ok(false) => {}
             Err(e) => println!("  • backstop watcher not started ({e})"),
         }
+    }
+
+    // 5. Desktop Control Room app. `cargo install kintsugi` ships only the CLI
+    // binaries (the GUI is a heavier, separate crate with webview deps), so this
+    // is where "install everything" is completed: if the app is already present
+    // we just register it with the OS; otherwise we offer to build it. The step
+    // never fails init — a headless/no-toolchain host just gets told how to add
+    // it later.
+    if !no_desktop {
+        ensure_desktop_app();
     }
 
     println!();
@@ -1569,18 +1937,24 @@ fn stop_via_daemon() -> Result<()> {
     let (locked, nonce, salt, params) =
         Client::auth_begin("shutdown").context("begin shutdown handshake")?;
 
-    let (nonce_hex, proof_hex) = if locked {
+    // `None` on the unlocked path (no vault) so no placeholder ever stands in for
+    // a real nonce/proof; `Some(..)` carries the challenge-response when locked.
+    let auth: Option<(String, String)> = if locked {
         let pw = admin_cmd::read_admin_password("Admin password to stop Kintsugi: ")?;
         let nonce_bytes = hex::decode(&nonce).context("decode challenge nonce")?;
         let proof =
             kintsugi_core::admin::compute_proof(&pw, &salt, params, &nonce_bytes, b"shutdown")
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-        (nonce, hex::encode(proof))
+        Some((nonce, hex::encode(proof)))
     } else {
-        (String::new(), String::new())
+        None
     };
 
-    match Client::shutdown("shutdown", &nonce_hex, &proof_hex) {
+    let (nonce_arg, proof_arg) = match &auth {
+        Some((n, p)) => (Some(n.as_str()), Some(p.as_str())),
+        None => (None, None),
+    };
+    match Client::shutdown("shutdown", nonce_arg, proof_arg) {
         Ok(()) => {
             // Authenticated: tear down the backstop watcher alongside the daemon
             // (same authorization — a locked host required the password above).

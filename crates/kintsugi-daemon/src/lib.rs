@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
-use kintsugi_core::admin::{self, SealedVault, VaultState};
+use kintsugi_core::admin::{self, VaultState};
 use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, TaintEvent, TaintState, Verdict};
 
 pub use ipc::{Client, Observation, Resolution, Server};
@@ -94,13 +94,12 @@ pub struct Daemon {
     scorer: Box<dyn kintsugi_model::Scorer>,
     snapshot_dir: PathBuf,
     kill_path: PathBuf,
-    /// The admin vault loaded at *daemon* startup (not at request time), so the
-    /// auth decision is made against the path the daemon resolved — a caller's
-    /// environment can't redirect it. `None` = unprovisioned (no lock).
-    vault: Option<SealedVault>,
-    /// The vault file exists but is unreadable/corrupt → stay locked (fail-closed):
-    /// refuse authenticated shutdown rather than silently allow it.
-    vault_degraded: bool,
+    /// The admin vault **path**, resolved once at daemon startup from the path the
+    /// daemon itself chose (a caller's environment can't redirect it). The vault
+    /// *contents* are read fresh from this path on every privileged op
+    /// ([`current_vault`](Self::current_vault)) — never cached — so a re-provision
+    /// or password change applies immediately, with no restart and no stale-copy bug.
+    vault_path: PathBuf,
     /// The last challenge nonce issued (and its op), consumed once by `Shutdown`.
     pending: RefCell<Option<(Vec<u8>, String)>>,
     /// Set when an authenticated shutdown has been accepted; the serve loop exits.
@@ -117,6 +116,10 @@ pub struct Daemon {
     /// (Phase 6). The hook is one-shot per tool call, so this resident state is the
     /// only place that can count an agent retrying a blocked action across calls.
     denial_streak: RefCell<std::collections::HashMap<String, u32>>,
+    /// Caps how much model-inference time the recorder path can impose on the
+    /// single-threaded serve loop, so a flood of risky shell records can't starve
+    /// real hold/approve traffic. See [`ScoreBudget`].
+    score_budget: RefCell<ScoreBudget>,
 }
 
 /// Rate-limit + lockout for admin authentication. The daemon is the single
@@ -158,6 +161,78 @@ impl AuthThrottle {
     }
 }
 
+/// Token-bucket budget for the *model scoring* on the recorder path.
+///
+/// The IPC serve loop is single-threaded: it reads one request, handles it to
+/// completion, then accepts the next. `record_shell` scores risky shell events
+/// with the local model so the Recorder rows can show a plain-English summary —
+/// but that scoring is one synchronous inference on the serve thread. A local
+/// peer (a runaway or compromised agent — the socket is owner-only, but that's
+/// exactly who we defend against) that floods the socket with risky `Observe`
+/// records would serialize one inference each and starve real hold/approve
+/// traffic, blinding the user's safety control plane. Crucially, that scoring is
+/// *cosmetic*: `record_shell` always records `Allow` (the command already ran),
+/// and the danger `class` rides along regardless. So under sustained load we
+/// shed the summary, not the record — the row is still logged with its class,
+/// just without the prose. `capacity` is the burst a quiet session banks;
+/// `refill_per_sec` is the steady ceiling on inferences/sec the recorder can
+/// impose on the serve thread.
+struct ScoreBudget {
+    tokens: f64,
+    capacity: f64,
+    refill_per_sec: f64,
+    last: std::time::Instant,
+}
+
+impl ScoreBudget {
+    fn new(capacity: f64, refill_per_sec: f64, now: std::time::Instant) -> Self {
+        Self {
+            tokens: capacity,
+            capacity,
+            refill_per_sec,
+            last: now,
+        }
+    }
+
+    /// Refill for elapsed time, then try to spend one token. Returns `false` when
+    /// the budget is exhausted — the caller skips the expensive scoring and falls
+    /// back to a rules-only (summary-less) record.
+    fn try_spend(&mut self, now: std::time::Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * self.refill_per_sec).min(self.capacity);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Agents whose CLI shows a WORKING interactive y/N prompt for an ambiguous
+/// hold. For these, the hold is resolved by the agent's own UI, so a daemon
+/// queue entry would just orphan (no one ever calls `resolve_pending`).
+///
+/// Everyone else — Gemini, Antigravity, OpenCode (its plugin throws on `ask`),
+/// the `kintsugi-exec` MCP tool, and any future/unknown surface — has no
+/// interactive prompt, so the human resolves the hold via the queue (the Held
+/// screen / `kintsugi queue` / `approve`). Default to enqueueing, so a new
+/// agent never silently drops a hold the user can't recover.
+const AGENTS_WITH_NATIVE_ASK: &[&str] = &["claude-code", "qwen", "copilot", "cursor", "codex"];
+
+/// Does THIS held command need a daemon-side queue entry?
+///
+/// Catastrophic always does (the dialect maps Hold→Deny, so the agent can't
+/// resolve it and the human runs it via `kintsugi run`). Ambiguous needs one
+/// for every agent EXCEPT those with a working native ask — see the constant.
+fn needs_queue_entry(cmd: &ProposedCommand, class: kintsugi_core::Class) -> bool {
+    if class == kintsugi_core::Class::Catastrophic {
+        return true;
+    }
+    !AGENTS_WITH_NATIVE_ASK.contains(&cmd.agent.as_str())
+}
+
 impl Daemon {
     /// Open the daemon backed by the event log at `db_path`, creating parent dirs.
     pub fn open(db_path: impl Into<PathBuf>) -> Result<Self> {
@@ -193,14 +268,10 @@ impl Daemon {
                 ipc::set_mode(&p, 0o600);
             }
         }
-        // Load the admin vault ONCE, here at daemon startup, from the path the
-        // daemon resolves (the daemon is launched by the admin/systemd, so its
-        // environment — not a later caller's — decides the vault location).
-        let (vault, vault_degraded) = match admin::load_vault(&admin::default_vault_path()) {
-            VaultState::Locked(v) => (Some(*v), false),
-            VaultState::Unprovisioned => (None, false),
-            VaultState::Degraded(_) => (None, true),
-        };
+        // Resolve the admin vault path here at startup (the daemon is launched by
+        // the admin/systemd, so its environment — not a later caller's — decides the
+        // location). The contents are read fresh per op, never cached.
+        let vault_path = admin::default_vault_path();
         // Rebuild information-flow taint by replaying the durable taint stream, so
         // a restart reconstructs taint instead of failing open (Provenance item D).
         // A load failure degrades to empty taint rather than aborting startup, but
@@ -218,13 +289,15 @@ impl Daemon {
             scorer: kintsugi_model::default_scorer(),
             snapshot_dir,
             kill_path,
-            vault,
-            vault_degraded,
+            vault_path,
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
             taint: RefCell::new(taint),
             denial_streak: RefCell::new(std::collections::HashMap::new()),
+            // Burst of 8 banked by a quiet session; steady ceiling of 4 model
+            // scorings/sec on the serve thread under a sustained recorder flood.
+            score_budget: RefCell::new(ScoreBudget::new(8.0, 4.0, std::time::Instant::now())),
         })
     }
 
@@ -353,16 +426,22 @@ impl Daemon {
         self.shutdown.get()
     }
 
+    /// Read the current admin vault, fresh from the daemon-resolved path. Called on
+    /// every privileged op so a re-provision / password change applies immediately —
+    /// the daemon is the authority on the *path* (a caller can't redirect it), and
+    /// the contents are never cached, so there is no stale-vault class of bug.
+    fn current_vault(&self) -> VaultState {
+        admin::load_vault(&self.vault_path)
+    }
+
     /// Issue a challenge for a privileged op. `locked=false` means no vault, so the
     /// caller may proceed without a proof.
     fn auth_begin(&self, op: &str) -> ipc::Response {
-        if self.vault_degraded {
-            return ipc::Response::Error {
+        match self.current_vault() {
+            VaultState::Degraded(_) => ipc::Response::Error {
                 message: "admin vault is degraded; refusing privileged operations".into(),
-            };
-        }
-        match &self.vault {
-            Some(v) => {
+            },
+            VaultState::Locked(v) => {
                 let nonce = match admin::random_auth_nonce() {
                     Ok(n) => n,
                     Err(_) => {
@@ -380,7 +459,7 @@ impl Daemon {
                     params,
                 }
             }
-            None => ipc::Response::Challenge {
+            VaultState::Unprovisioned => ipc::Response::Challenge {
                 locked: false,
                 nonce: String::new(),
                 salt: String::new(),
@@ -389,19 +468,28 @@ impl Daemon {
         }
     }
 
-    /// Complete an authenticated shutdown. Enforced against the daemon's own vault.
-    fn shutdown_op(&self, op: &str, nonce_hex: &str, proof_hex: &str) -> ipc::Response {
-        if self.vault_degraded {
-            self.record_admin(op, false, "vault degraded");
-            return ipc::Response::Error {
-                message: "admin vault is degraded; refusing to stop".into(),
-            };
-        }
-        let Some(vault) = &self.vault else {
+    /// Complete an authenticated shutdown. Enforced against the daemon's own vault,
+    /// read fresh from disk so a just-provisioned vault is honored without a restart.
+    fn shutdown_op(
+        &self,
+        op: &str,
+        nonce_hex: Option<&str>,
+        proof_hex: Option<&str>,
+    ) -> ipc::Response {
+        let vault = match self.current_vault() {
+            VaultState::Degraded(_) => {
+                self.record_admin(op, false, "vault degraded");
+                return ipc::Response::Error {
+                    message: "admin vault is degraded; refusing to stop".into(),
+                };
+            }
             // Unprovisioned: there is no lock, so a clean shutdown is allowed.
-            self.record_admin(op, true, "unprovisioned");
-            self.shutdown.set(true);
-            return ipc::Response::Ack;
+            VaultState::Unprovisioned => {
+                self.record_admin(op, true, "unprovisioned");
+                self.shutdown.set(true);
+                return ipc::Response::Ack;
+            }
+            VaultState::Locked(v) => v,
         };
         // Brute-force lockout: after repeated failures, refuse without even
         // checking the proof until the window elapses (the attempt is still
@@ -417,11 +505,19 @@ impl Daemon {
         }
         // The challenge is one-shot: take it regardless of the outcome.
         let pending = self.pending.borrow_mut().take();
-        let ok = match (pending, hex::decode(nonce_hex), hex::decode(proof_hex)) {
-            (Some((issued_nonce, issued_op)), Ok(nonce), Ok(proof)) => {
-                issued_op == op
-                    && issued_nonce == nonce
-                    && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+        // A locked vault requires BOTH a nonce and a proof. If either is absent
+        // (the unauthenticated caller), fail without ever decoding a placeholder
+        // into the crypto path.
+        let ok = match (pending, nonce_hex, proof_hex) {
+            (Some((issued_nonce, issued_op)), Some(nonce_hex), Some(proof_hex)) => {
+                match (hex::decode(nonce_hex), hex::decode(proof_hex)) {
+                    (Ok(nonce), Ok(proof)) => {
+                        issued_op == op
+                            && issued_nonce == nonce
+                            && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+                    }
+                    _ => false,
+                }
             }
             _ => false,
         };
@@ -432,6 +528,19 @@ impl Daemon {
             ipc::Response::Ack
         } else {
             self.throttle.borrow_mut().record_failure();
+            // Distinguish a wrong password from a vault that simply can't carry a
+            // proof (provisioned before the asymmetric-auth scheme): the latter
+            // fails for *every* password, so a bare "authentication failed" reads
+            // as a bug. Point the user at the one-line fix instead.
+            if !vault.supports_proof() {
+                self.record_admin(op, false, "vault missing proof key");
+                return ipc::Response::Error {
+                    message:
+                        "admin vault has no auth key — re-run `kintsugi admin provision --force` \
+                              (the daemon picks it up immediately, no restart needed)"
+                            .into(),
+                };
+            }
             self.record_admin(op, false, "authentication failed");
             ipc::Response::Error {
                 message: "authentication failed".into(),
@@ -611,7 +720,7 @@ impl Daemon {
                 );
             }
         }
-        if verdict.decision == Decision::Hold {
+        if verdict.decision == Decision::Hold && needs_queue_entry(&cmd, verdict.class) {
             if let Err(e) = self
                 .log
                 .enqueue_pending(&cmd, verdict.class, &verdict.reason)
@@ -820,7 +929,35 @@ impl Daemon {
         // Allow, not the rule's gate decision: the command already executed, so
         // recording a Hold/Deny here would be a lie about what happened. The
         // class still rides along (verdict.class) so the timeline flags danger.
-        let verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
+        let mut verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
+        // Score risky commands with the model so the Recorder rows and the
+        // details drawer can show a plain-English summary alongside the raw
+        // command. The decision stays Allow — this is just metadata on a row
+        // that's already an audit record of the past.
+        //
+        // The model call is one synchronous inference on the single-threaded
+        // serve loop, so it's spent against a token-bucket budget: under a flood
+        // of risky records the budget empties and we record the row *without* the
+        // summary rather than let the recorder serialize unbounded inference and
+        // starve real hold/approve traffic. The class still rides in verdict.class
+        // either way, so the timeline never loses the danger signal — only the
+        // cosmetic prose. (Safe commands never score, so they never spend.)
+        let may_score = !matches!(m.class, kintsugi_core::Class::Safe)
+            && self
+                .score_budget
+                .borrow_mut()
+                .try_spend(std::time::Instant::now());
+        if may_score {
+            let out = self.scorer.score(&cmd, m.class, &m.rule);
+            verdict.summary = Some(out.summary);
+            verdict.tier = 2;
+            if m.class == kintsugi_core::Class::Ambiguous {
+                verdict.risk = Some(out.risk);
+            }
+        } else if m.class != kintsugi_core::Class::Safe {
+            // Budget shed: keep the danger tier on the row even without prose.
+            verdict.tier = 2;
+        }
         // Recoverer: snapshot the paths a *destructive* human command will touch,
         // so `kintsugi undo` can roll back a person's *filesystem* mistake (rm -rf,
         // a clobbering overwrite) the same way it rolls back an agent's. The shell
@@ -885,11 +1022,21 @@ impl Daemon {
             },
             ipc::Request::Approve { id } => self.resolve_pending_response(&id, Decision::Allow),
             ipc::Request::Deny { id } => self.resolve_pending_response(&id, Decision::Deny),
+            ipc::Request::PrunePending => match self.log.prune_pending() {
+                Ok(n) => ipc::Response::Pending {
+                    status: n.to_string(),
+                },
+                Err(e) => ipc::Response::Error {
+                    message: e.to_string(),
+                },
+            },
             ipc::Request::Status => ipc::Response::Status {
                 scorer: self.scorer_name().to_string(),
             },
             ipc::Request::AuthBegin { op } => self.auth_begin(&op),
-            ipc::Request::Shutdown { op, nonce, proof } => self.shutdown_op(&op, &nonce, &proof),
+            ipc::Request::Shutdown { op, nonce, proof } => {
+                self.shutdown_op(&op, nonce.as_deref(), proof.as_deref())
+            }
         }
     }
 
@@ -996,4 +1143,100 @@ pub fn run() -> Result<()> {
 /// Path to the daemon's PID file (next to the event log).
 pub fn pid_file_path() -> PathBuf {
     default_db_path().with_file_name("kintsugi.pid")
+}
+
+#[cfg(test)]
+mod queue_entry_tests {
+    use super::needs_queue_entry;
+    use kintsugi_core::{Class, ProposedCommand};
+
+    fn cmd(agent: &str) -> ProposedCommand {
+        ProposedCommand::new(
+            agent,
+            std::path::Path::new("/tmp"),
+            vec!["rm".into(), "x".into()],
+            "rm x",
+        )
+    }
+
+    #[test]
+    fn catastrophic_always_enqueues() {
+        for a in [
+            "claude-code",
+            "qwen",
+            "gemini",
+            "mcp",
+            "opencode",
+            "anything",
+        ] {
+            assert!(
+                needs_queue_entry(&cmd(a), Class::Catastrophic),
+                "catastrophic must queue for {a}"
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_skips_only_native_ask_agents() {
+        // Native ask → resolved by the agent's own prompt, so NO queue entry.
+        for a in ["claude-code", "qwen", "copilot", "cursor", "codex"] {
+            assert!(
+                !needs_queue_entry(&cmd(a), Class::Ambiguous),
+                "{a} has native ask → no queue orphan"
+            );
+        }
+        // No native ask → the human resolves via the queue, so it MUST enqueue.
+        for a in ["gemini", "antigravity", "opencode", "mcp", "future-agent"] {
+            assert!(
+                needs_queue_entry(&cmd(a), Class::Ambiguous),
+                "{a} has no prompt → must queue"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod score_budget_tests {
+    use super::ScoreBudget;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn burst_is_bounded_then_refills_at_the_steady_rate() {
+        let t0 = Instant::now();
+        // Capacity 8, refill 4/sec.
+        let mut b = ScoreBudget::new(8.0, 4.0, t0);
+
+        // A flood at t0 spends the whole burst and no more — the 9th is shed, so
+        // a recorder flood can never serialize unbounded inference on the loop.
+        for i in 0..8 {
+            assert!(b.try_spend(t0), "burst token {i} should be granted");
+        }
+        assert!(!b.try_spend(t0), "9th in the same instant must be shed");
+
+        // After 1s, 4 tokens have refilled (the steady ceiling) — not the full 8.
+        let t1 = t0 + Duration::from_secs(1);
+        for i in 0..4 {
+            assert!(b.try_spend(t1), "refilled token {i} should be granted");
+        }
+        assert!(!b.try_spend(t1), "refill is rate-capped, not a full reset");
+    }
+
+    #[test]
+    fn refill_never_exceeds_capacity() {
+        let t0 = Instant::now();
+        let mut b = ScoreBudget::new(8.0, 4.0, t0);
+        for _ in 0..8 {
+            assert!(b.try_spend(t0));
+        }
+        // Idle far longer than it takes to refill — tokens cap at `capacity`, so a
+        // long-quiet session banks a burst of 8, never an unbounded backlog.
+        let later = t0 + Duration::from_secs(3600);
+        for i in 0..8 {
+            assert!(b.try_spend(later), "banked token {i} after a long idle");
+        }
+        assert!(
+            !b.try_spend(later),
+            "cap holds: no more than `capacity` banked"
+        );
+    }
 }

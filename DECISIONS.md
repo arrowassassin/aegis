@@ -614,3 +614,17 @@ the locked product decisions this build implements.
   trifecta and the demo GIF — both need a real terminal / recording environment and
   the frontend-design skill, so they are left as the human-in-the-loop step (the
   build env cannot record a GIF, consistent with the P1.7 decision).
+- Desktop app (P6.5/P6.6, Tauri + Dioxus): chosen over vanilla JS and a JS
+  framework because the project is a Rust workspace with a hard minimal-dependency
+  / no-supply-chain stance — Dioxus (Rust→WASM) keeps the frontend all-Rust, no
+  npm, and lets it SHARE the engine's types. The view-models live in a wasm-safe
+  `kintsugi-app-types` crate (serde only — no rusqlite, no sockets) that BOTH the
+  native engine (`kintsugi-app`) and the Dioxus frontend depend on, so every
+  `invoke` payload is one compiler-checked contract (no hand-kept TS/JSON). The
+  engine reads the read-only event log + the daemon over IPC (queue, session taint,
+  the P6.4 trail, status) and performs no decisions. The `desktop/` tree (Tauri
+  host + Dioxus frontend) is detached from the repo workspace via its own
+  `[workspace]` tables because it needs the platform webview + the wasm target,
+  which CI/headless can't build — same honest "not-CI-compiled" posture as the
+  llama backend. GPUI was considered and declined: immature, macOS-first, and a
+  weaker cross-platform story than the hard mac/Linux/Windows requirement allows.

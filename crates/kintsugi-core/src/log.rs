@@ -378,6 +378,19 @@ impl EventLog {
         }
     }
 
+    /// Drop every still-pending queue entry without writing an audit row per
+    /// one — the bulk recovery path for orphaned holds (e.g. an ambiguous
+    /// command that the agent's native prompt approved without anyone calling
+    /// `resolve_pending`). Returns the number of entries pruned. This does NOT
+    /// alter the immutable audit log; it just clears the "needs your decision"
+    /// queue, which is a derived view.
+    pub fn prune_pending(&self) -> Result<u64, LogError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM pending WHERE status = 'pending'", [])?;
+        Ok(n as u64)
+    }
+
     /// List the still-pending queued commands, oldest first.
     pub fn list_pending(&self) -> Result<Vec<PendingItem>, LogError> {
         let mut stmt = self.conn.prepare(
@@ -927,6 +940,38 @@ impl EventLog {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?)
+    }
+
+    /// Dashboard counts via SQL aggregation — `(allowed, held, denied, trifecta,
+    /// total)`. O(scan) in SQLite but without materializing every row in Rust, so
+    /// it stays fast on a multi-hundred-thousand-row log (the in-Rust fold did not).
+    pub fn decision_metrics(&self) -> Result<(u64, u64, u64, u64, u64), LogError> {
+        let (mut allowed, mut held, mut denied) = (0i64, 0i64, 0i64);
+        let mut stmt = self
+            .conn
+            .prepare("SELECT decision, COUNT(*) FROM events GROUP BY decision")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (decision, n) = row?;
+            match decision.as_str() {
+                "allow" => allowed = n,
+                "hold" => held = n,
+                "deny" => denied = n,
+                _ => {}
+            }
+        }
+        let trifecta: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE reason LIKE '%TRIFECTA%'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((
+            allowed as u64,
+            held as u64,
+            denied as u64,
+            trifecta as u64,
+            (allowed + held + denied) as u64,
+        ))
     }
 
     /// The highest sequence number (0 if empty). O(1) via the rowid index — cheap

@@ -1,0 +1,131 @@
+name: Release Desktop
+
+# Builds the Kintsugi Control Room desktop app for each OS on a version tag and
+# uploads installable artifacts (.dmg, .msi, .deb, .AppImage) to the GitHub
+# Release. The CLI release workflow lives in release.yml; this one is the GUI.
+#
+# Code signing requires secrets and is a deliberate human step — this workflow
+# never touches signing secrets autonomously. Unsigned builds will show the
+# usual "unidentified developer" warning on first launch; the install path is:
+#   * macOS  : right-click .dmg → Open
+#   * Windows: right-click .msi → "Run anyway" in Smart Screen
+#   * Linux  : the .deb / .AppImage runs without warnings
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Least privilege at the top: only the `release` job that publishes needs write,
+# and it grants itself `contents: write` explicitly below. Every build job is
+# read-only.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build · ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: macos-arm64, runner: macos-14,    triple: aarch64-apple-darwin,      kind: dmg }
+          - { name: macos-x64,   runner: macos-13,    triple: x86_64-apple-darwin,       kind: dmg }
+          - { name: linux-x64,   runner: ubuntu-22.04, triple: x86_64-unknown-linux-gnu, kind: deb }
+          - { name: windows-x64, runner: windows-latest, triple: x86_64-pc-windows-msvc, kind: msi }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --target ${{ matrix.target.triple }} --profile minimal
+
+      - name: Linux deps (webview / .deb)
+        if: matrix.target.kind == 'deb'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+                                  libayatana-appindicator3-dev librsvg2-dev pkg-config dpkg-dev
+
+      - name: Build release binary
+        working-directory: desktop-dx
+        run: cargo build --release --target ${{ matrix.target.triple }}
+
+      # ---------------- macOS .dmg ----------------
+      - name: Package macOS .dmg
+        if: matrix.target.kind == 'dmg'
+        working-directory: desktop-dx
+        run: |
+          BIN=target/${{ matrix.target.triple }}/release/kintsugi-control-room
+          # Self-install registers the .app bundle in ~/Applications by default;
+          # for the DMG we redirect HOME to a staging dir so we capture the .app.
+          STAGE="$(mktemp -d)"
+          HOME="$STAGE" "$BIN" --install
+          test -d "$STAGE/Applications/Kintsugi.app"
+          DMG="kintsugi-control-room-${{ matrix.target.name }}.dmg"
+          hdiutil create -volname Kintsugi -srcfolder "$STAGE/Applications/Kintsugi.app" \
+            -ov -format UDZO "$DMG"
+          mkdir -p ../dist && mv "$DMG" ../dist/
+
+      # ---------------- Linux .deb ----------------
+      - name: Install cargo-deb
+        if: matrix.target.kind == 'deb'
+        run: cargo install cargo-deb --locked
+
+      - name: Package Linux .deb
+        if: matrix.target.kind == 'deb'
+        working-directory: desktop-dx
+        run: |
+          cargo deb --no-build --target ${{ matrix.target.triple }} \
+                    --output ../dist/kintsugi-control-room-${{ matrix.target.name }}.deb \
+            || (echo "cargo-deb metadata missing — falling back to a tarball" \
+                && tar -C target/${{ matrix.target.triple }}/release -czf \
+                       ../dist/kintsugi-control-room-${{ matrix.target.name }}.tar.gz kintsugi-control-room)
+
+      # ---------------- Windows .msi --------------
+      - name: Install cargo-wix
+        if: matrix.target.kind == 'msi'
+        run: cargo install cargo-wix --locked
+
+      - name: Package Windows .msi
+        if: matrix.target.kind == 'msi'
+        shell: pwsh
+        working-directory: desktop-dx
+        run: |
+          # cargo-wix needs a wix\main.wxs; if absent, fall back to zipping the exe
+          if (Test-Path wix\main.wxs) {
+            cargo wix --no-build --target ${{ matrix.target.triple }} `
+                      --output ..\dist\kintsugi-control-room-${{ matrix.target.name }}.msi
+          } else {
+            mkdir ..\dist -ea 0
+            Compress-Archive target\${{ matrix.target.triple }}\release\kintsugi-control-room.exe `
+                             ..\dist\kintsugi-control-room-${{ matrix.target.name }}.zip
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.name }}
+          path: dist/
+
+  release:
+    name: Publish artifacts to release
+    needs: build
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - name: Flatten
+        run: find dist -mindepth 2 -type f -exec mv -t dist {} +
+      - name: Compute SHA256SUMS
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*

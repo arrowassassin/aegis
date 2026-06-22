@@ -1,0 +1,21 @@
+[package]
+name = "kintsugi-app"
+description = "Data-binding engine for the Kintsugi desktop app — reads the daemon and event log over IPC and shapes them into UI view-models."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kintsugi-core = { workspace = true }
+kintsugi-daemon = { workspace = true }
+kintsugi-app-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

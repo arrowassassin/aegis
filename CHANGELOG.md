@@ -64,6 +64,20 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   fired; `NO_COLOR` respected; a designed empty state). Docs: new
   [`docs/provenance.md`](docs/provenance.md) and a `[provenance]` block in
   [`docs/policy.md`](docs/policy.md).
+- **TUI: trifecta tag.** The detail pane names a taint-driven block ("lethal-trifecta
+  block — untrusted content reached a sink"), so a provenance hold reads as such.
+- **Desktop app (Tauri + Dioxus, all-Rust, no npm).** New `kintsugi-app`
+  data-binding engine (reads the daemon over IPC + the event log into UI
+  view-models: timeline, audit search, metrics, hash-chain verify, queue, the P6.4
+  provenance trail, status) and `kintsugi-app-types` (the wasm-safe, compiler-checked
+  data contract shared by the engine and the frontend). The `desktop/` tree adds the
+  Tauri host (`#[tauri::command]`s over the engine) and a Dioxus/WASM **Control Room**
+  with a left-nav and five screens — Dashboard (metric cards + held alert + recent
+  activity), Live feed (filter + select → detail), Held queue (one-key allow/deny),
+  Audit log (search + tamper-evidence verify badge), Settings — plus the
+  provenance-trail hero (gold seam threading the steps, danger accent on the rule
+  that fired). Built with Trunk + `cargo tauri` on a workstation (detached from the
+  CI workspace; needs the platform webview + wasm target).
 
 ## [0.2.1] — 2026-06-17
 
