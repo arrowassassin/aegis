@@ -115,6 +115,61 @@ fn strip_hooks(home: &Path) -> Vec<String> {
     cleaned
 }
 
+/// Remove the desktop Control Room app's OS integration — the part that
+/// `--install` (and the packaged `.dmg`/`.msi`/`.deb`) put OUTSIDE the data dir.
+/// Mirrors the paths in `desktop-dx/src/install.rs`. Without this, `kintsugi
+/// uninstall` left the app in `/Applications` (macOS), the app launcher (Linux),
+/// or the Programs folder (Windows) — where it could still be opened and, if data
+/// was kept, unlock and show it. Returns the paths actually removed.
+fn remove_desktop_app(home: &Path) -> Vec<String> {
+    // (path, is_dir)
+    let mut targets: Vec<(PathBuf, bool)> = Vec::new();
+    #[cfg(target_os = "macos")]
+    targets.push((home.join("Applications/Kintsugi.app"), true));
+    #[cfg(target_os = "linux")]
+    {
+        targets.push((home.join(".local/bin/kintsugi-control-room"), false));
+        targets.push((
+            home.join(".local/share/applications/kintsugi-control-room.desktop"),
+            false,
+        ));
+        for size in [16, 32, 64, 128, 256, 512] {
+            targets.push((
+                home.join(format!(
+                    ".local/share/icons/hicolor/{size}x{size}/apps/kintsugi-control-room.png"
+                )),
+                false,
+            ));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local"));
+        targets.push((local.join("Programs/Kintsugi"), true));
+        let roaming = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Roaming"));
+        targets.push((
+            roaming.join("Microsoft/Windows/Start Menu/Programs/Kintsugi.lnk"),
+            false,
+        ));
+    }
+    let mut removed = Vec::new();
+    for (p, is_dir) in targets {
+        let gone = if is_dir {
+            p.is_dir() && std::fs::remove_dir_all(&p).is_ok()
+        } else {
+            p.is_file() && std::fs::remove_file(&p).is_ok()
+        };
+        if gone {
+            removed.push(p.display().to_string());
+        }
+    }
+    removed
+}
+
 pub fn run(purge: bool, yes: bool) -> Result<()> {
     let home = home();
 
@@ -157,6 +212,7 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
     }
     println!("  • remove the shim dir:    {}", shim.display());
     println!("  • remove the binaries in: {}", bdir.display());
+    println!("  • remove the desktop app (Applications / launcher / Start menu) if installed");
     if purge {
         println!(
             "  • PURGE all stored data:  {}  (events, vault, model — UNRECOVERABLE)",
@@ -195,6 +251,9 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
         if p.exists() && std::fs::remove_file(&p).is_ok() {
             println!("  removed: {}", p.display());
         }
+    }
+    for p in remove_desktop_app(&home) {
+        println!("  removed desktop app: {p}");
     }
     if purge && data.is_dir() && std::fs::remove_dir_all(&data).is_ok() {
         println!("  purged data: {}", data.display());
