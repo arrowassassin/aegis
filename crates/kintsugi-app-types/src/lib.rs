@@ -99,6 +99,8 @@ pub struct QueueRow {
     pub provenance_block: bool,
     /// The model's one-line plain-English summary from hold time, if it scored.
     pub summary: Option<String>,
+    /// Working directory the command was proposed in (for the detail drawer).
+    pub cwd: String,
 }
 
 /// The provenance view for a session: its taint state and the ordered trail.

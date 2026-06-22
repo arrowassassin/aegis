@@ -206,6 +206,7 @@ pub fn queue() -> anyhow::Result<Vec<QueueRow>> {
             class: it.class.as_str().to_string(),
             provenance_block: is_provenance_block(&it.reason),
             summary: it.summary,
+            cwd: it.command.cwd.display().to_string(),
             reason: it.reason,
         })
         .collect())

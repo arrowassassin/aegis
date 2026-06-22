@@ -1102,6 +1102,25 @@ pub fn Held() -> Element {
                         let reason = q.reason.clone();
                         let summary = q.summary.clone();
                         let ts = clock(&q.ts);
+                        // The same "Activity detail" drawer the feed opens — built from the
+                        // held command so a reviewer can inspect it (cwd, summary, rule, id)
+                        // without leaving the queue. outcome is "held"; tier follows the
+                        // summary (the model only scores the ambiguous/catastrophic bands).
+                        let detail_row = crate::bindings::TimelineRow {
+                            id: q.id.clone(),
+                            ts: q.ts.clone(),
+                            agent: q.agent.clone(),
+                            session: q.session.clone(),
+                            command: q.command.clone(),
+                            class: q.class.clone(),
+                            outcome: "held".to_string(),
+                            reason: q.reason.clone(),
+                            provenance_block: q.provenance_block,
+                            risk: None,
+                            summary: q.summary.clone(),
+                            cwd: q.cwd.clone(),
+                            tier: if q.summary.is_some() { 2 } else { 1 },
+                        };
                         let trifecta = q.provenance_block;
                         let head_bg = if trifecta {
                             "background:linear-gradient(90deg,rgba(255,93,93,.1),transparent)"
@@ -1161,8 +1180,16 @@ pub fn Held() -> Element {
                                     }
 
                                     // raw command verbatim, on the --term surface
-                                    div { style: "font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px", "Raw command — shown verbatim" }
-                                    div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.5;background:var(--term);border:1px solid var(--line);border-radius:9px;padding:13px 15px;color:#e7ecf6;overflow-x:auto;white-space:nowrap", "{command}" }
+                                    div { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px",
+                                        span { style: "font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px", "Raw command — shown verbatim" }
+                                        span { style: "font-size:11px;color:var(--gold);font-weight:600", "View detail →" }
+                                    }
+                                    div {
+                                        style: "font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.5;background:var(--term);border:1px solid var(--line);border-radius:9px;padding:13px 15px;color:#e7ecf6;overflow-x:auto;white-space:nowrap;cursor:pointer",
+                                        title: "Open the Activity detail drawer",
+                                        onclick: move |_| store.detail.set(Some(detail_row.clone())),
+                                        "{command}"
+                                    }
 
                                     // actions
                                     div { style: "display:flex;gap:11px;flex-wrap:wrap;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)",
