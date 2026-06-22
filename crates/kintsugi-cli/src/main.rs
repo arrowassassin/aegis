@@ -1844,18 +1844,24 @@ fn stop_via_daemon() -> Result<()> {
     let (locked, nonce, salt, params) =
         Client::auth_begin("shutdown").context("begin shutdown handshake")?;
 
-    let (nonce_hex, proof_hex) = if locked {
+    // `None` on the unlocked path (no vault) so no placeholder ever stands in for
+    // a real nonce/proof; `Some(..)` carries the challenge-response when locked.
+    let auth: Option<(String, String)> = if locked {
         let pw = admin_cmd::read_admin_password("Admin password to stop Kintsugi: ")?;
         let nonce_bytes = hex::decode(&nonce).context("decode challenge nonce")?;
         let proof =
             kintsugi_core::admin::compute_proof(&pw, &salt, params, &nonce_bytes, b"shutdown")
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-        (nonce, hex::encode(proof))
+        Some((nonce, hex::encode(proof)))
     } else {
-        (String::new(), String::new())
+        None
     };
 
-    match Client::shutdown("shutdown", &nonce_hex, &proof_hex) {
+    let (nonce_arg, proof_arg) = match &auth {
+        Some((n, p)) => (Some(n.as_str()), Some(p.as_str())),
+        None => (None, None),
+    };
+    match Client::shutdown("shutdown", nonce_arg, proof_arg) {
         Ok(()) => {
             // Authenticated: tear down the backstop watcher alongside the daemon
             // (same authorization — a locked host required the password above).

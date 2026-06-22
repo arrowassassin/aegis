@@ -57,8 +57,8 @@ fn locked_daemon_requires_a_valid_proof_to_stop() {
     let bad = admin::compute_proof("guess", &salt, params, &nonce_bytes, b"shutdown").unwrap();
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce: nonce.clone(),
-        proof: hex::encode(bad),
+        nonce: Some(nonce.clone()),
+        proof: Some(hex::encode(bad)),
     });
     assert!(matches!(resp, ipc::Response::Error { .. }));
     assert!(!daemon.should_shutdown(), "wrong password must not stop it");
@@ -79,8 +79,8 @@ fn locked_daemon_requires_a_valid_proof_to_stop() {
     .unwrap();
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce,
-        proof: hex::encode(good),
+        nonce: Some(nonce),
+        proof: Some(hex::encode(good)),
     });
     assert!(matches!(resp, ipc::Response::Ack));
     assert!(daemon.should_shutdown(), "correct password stops it");
@@ -119,8 +119,8 @@ fn a_captured_proof_cannot_be_replayed() {
     assert!(matches!(
         daemon.handle_request(ipc::Request::Shutdown {
             op: "shutdown".into(),
-            nonce: nonce.clone(),
-            proof: proof.clone(),
+            nonce: Some(nonce.clone()),
+            proof: Some(proof.clone()),
         }),
         ipc::Response::Ack
     ));
@@ -128,8 +128,8 @@ fn a_captured_proof_cannot_be_replayed() {
     // Replaying the SAME proof after the one-shot challenge is consumed → rejected.
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce,
-        proof,
+        nonce: Some(nonce),
+        proof: Some(proof),
     });
     assert!(
         matches!(resp, ipc::Response::Error { .. }),
@@ -157,8 +157,8 @@ fn repeated_failures_lock_out_brute_force() {
     for _ in 0..8 {
         if let ipc::Response::Error { message } = daemon.handle_request(ipc::Request::Shutdown {
             op: "shutdown".into(),
-            nonce: String::new(),
-            proof: "00".into(),
+            nonce: None,
+            proof: Some("00".into()),
         }) {
             if message.contains("locked out") {
                 locked_out = true;
@@ -211,8 +211,8 @@ fn a_vault_provisioned_after_startup_is_honored_without_a_restart() {
     .unwrap();
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce,
-        proof: hex::encode(good),
+        nonce: Some(nonce),
+        proof: Some(hex::encode(good)),
     });
     assert!(matches!(resp, ipc::Response::Ack));
     assert!(daemon.should_shutdown());
@@ -247,8 +247,8 @@ fn a_reprovision_rotates_credentials_live_without_a_restart() {
     let old = admin::compute_proof("old password one", &salt, params, &nb, b"shutdown").unwrap();
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce: nonce.clone(),
-        proof: hex::encode(old),
+        nonce: Some(nonce.clone()),
+        proof: Some(hex::encode(old)),
     });
     assert!(
         matches!(resp, ipc::Response::Error { .. }),
@@ -264,8 +264,8 @@ fn a_reprovision_rotates_credentials_live_without_a_restart() {
     let new = admin::compute_proof("new password two", &salt, params, &nb, b"shutdown").unwrap();
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce,
-        proof: hex::encode(new),
+        nonce: Some(nonce),
+        proof: Some(hex::encode(new)),
     });
     assert!(
         matches!(resp, ipc::Response::Ack),
@@ -293,8 +293,8 @@ fn unprovisioned_daemon_stops_without_a_password() {
     assert!(!locked, "no vault → not locked");
     let resp = daemon.handle_request(ipc::Request::Shutdown {
         op: "shutdown".into(),
-        nonce: String::new(),
-        proof: String::new(),
+        nonce: None,
+        proof: None,
     });
     assert!(matches!(resp, ipc::Response::Ack));
     assert!(daemon.should_shutdown());

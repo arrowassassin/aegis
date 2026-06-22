@@ -71,8 +71,11 @@ pub enum Request {
     /// "Here is the challenge proof for `op`; do it." Currently only shutdown.
     Shutdown {
         op: String,
-        nonce: String,
-        proof: String,
+        /// The challenge nonce + proof (hex). `None` on the unauthenticated path
+        /// (no vault provisioned) — modeled as absence, NOT an empty string, so
+        /// no placeholder ever flows into the proof-verification crypto sink.
+        nonce: Option<String>,
+        proof: Option<String>,
     },
 }
 
@@ -350,13 +353,15 @@ impl Client {
         }
     }
 
-    /// Complete an authenticated shutdown with a challenge proof (hex). On success
-    /// the daemon records the event and exits.
-    pub fn shutdown(op: &str, nonce: &str, proof: &str) -> Result<()> {
+    /// Complete a shutdown. Pass `Some(nonce_hex)` + `Some(proof_hex)` for the
+    /// authenticated path (a provisioned vault); pass `None`/`None` when no vault
+    /// is set and no proof is required. Absence is modeled as `None`, never an
+    /// empty string, so a placeholder can't be mistaken for a real nonce.
+    pub fn shutdown(op: &str, nonce: Option<&str>, proof: Option<&str>) -> Result<()> {
         expect_ack(round_trip(&Request::Shutdown {
             op: op.to_string(),
-            nonce: nonce.to_string(),
-            proof: proof.to_string(),
+            nonce: nonce.map(str::to_string),
+            proof: proof.map(str::to_string),
         })?)
     }
 

@@ -146,7 +146,7 @@ pub fn stop_engine() -> anyhow::Result<()> {
     if locked {
         anyhow::bail!("password-required");
     }
-    Client::shutdown("shutdown", "", "").map_err(|e| anyhow::anyhow!("couldn't stop daemon: {e}"))
+    Client::shutdown("shutdown", None, None).map_err(|e| anyhow::anyhow!("couldn't stop daemon: {e}"))
 }
 
 /// Stop with the admin password — runs the full challenge/proof handshake. The
@@ -158,7 +158,7 @@ pub fn stop_engine_with_password(password: &str) -> anyhow::Result<()> {
     }
     let (locked, nonce, salt, params) = Client::auth_begin("shutdown")?;
     if !locked {
-        return Client::shutdown("shutdown", "", "").map_err(|e| anyhow::anyhow!("{e}"));
+        return Client::shutdown("shutdown", None, None).map_err(|e| anyhow::anyhow!("{e}"));
     }
     let nonce_bytes = hex::decode(&nonce).map_err(|e| anyhow::anyhow!("bad nonce: {e}"))?;
     let proof = kintsugi_core::admin::compute_proof(password, &salt, params, &nonce_bytes, b"shutdown")
@@ -167,7 +167,7 @@ pub fn stop_engine_with_password(password: &str) -> anyhow::Result<()> {
     // as "wrong password" — lockout, degraded-vault, and "no auth key" messages
     // are distinct and actionable, and masking them sends the user down the
     // wrong recovery path (and silent retries extend the lockout backoff).
-    Client::shutdown("shutdown", &nonce, &hex::encode(proof)).map_err(|e| {
+    Client::shutdown("shutdown", Some(&nonce), Some(&hex::encode(proof))).map_err(|e| {
         let msg = e.to_string();
         if msg.contains("authentication failed") {
             anyhow::anyhow!("wrong password")

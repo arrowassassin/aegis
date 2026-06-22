@@ -410,7 +410,12 @@ impl Daemon {
 
     /// Complete an authenticated shutdown. Enforced against the daemon's own vault,
     /// read fresh from disk so a just-provisioned vault is honored without a restart.
-    fn shutdown_op(&self, op: &str, nonce_hex: &str, proof_hex: &str) -> ipc::Response {
+    fn shutdown_op(
+        &self,
+        op: &str,
+        nonce_hex: Option<&str>,
+        proof_hex: Option<&str>,
+    ) -> ipc::Response {
         let vault = match self.current_vault() {
             VaultState::Degraded(_) => {
                 self.record_admin(op, false, "vault degraded");
@@ -440,11 +445,19 @@ impl Daemon {
         }
         // The challenge is one-shot: take it regardless of the outcome.
         let pending = self.pending.borrow_mut().take();
-        let ok = match (pending, hex::decode(nonce_hex), hex::decode(proof_hex)) {
-            (Some((issued_nonce, issued_op)), Ok(nonce), Ok(proof)) => {
-                issued_op == op
-                    && issued_nonce == nonce
-                    && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+        // A locked vault requires BOTH a nonce and a proof. If either is absent
+        // (the unauthenticated caller), fail without ever decoding a placeholder
+        // into the crypto path.
+        let ok = match (pending, nonce_hex, proof_hex) {
+            (Some((issued_nonce, issued_op)), Some(nonce_hex), Some(proof_hex)) => {
+                match (hex::decode(nonce_hex), hex::decode(proof_hex)) {
+                    (Ok(nonce), Ok(proof)) => {
+                        issued_op == op
+                            && issued_nonce == nonce
+                            && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+                    }
+                    _ => false,
+                }
             }
             _ => false,
         };
@@ -951,7 +964,9 @@ impl Daemon {
                 scorer: self.scorer_name().to_string(),
             },
             ipc::Request::AuthBegin { op } => self.auth_begin(&op),
-            ipc::Request::Shutdown { op, nonce, proof } => self.shutdown_op(&op, &nonce, &proof),
+            ipc::Request::Shutdown { op, nonce, proof } => {
+                self.shutdown_op(&op, nonce.as_deref(), proof.as_deref())
+            }
         }
     }
 
