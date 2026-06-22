@@ -856,7 +856,25 @@ impl Daemon {
         // Allow, not the rule's gate decision: the command already executed, so
         // recording a Hold/Deny here would be a lie about what happened. The
         // class still rides along (verdict.class) so the timeline flags danger.
-        let verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
+        let mut verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
+        // Score risky commands with the model so the Recorder rows and the
+        // details drawer can show a plain-English summary alongside the raw
+        // command. The decision stays Allow — this is just metadata on a row
+        // that's already an audit record of the past.
+        match m.class {
+            kintsugi_core::Class::Ambiguous => {
+                let out = self.scorer.score(&cmd, m.class, &m.rule);
+                verdict.summary = Some(out.summary);
+                verdict.risk = Some(out.risk);
+                verdict.tier = 2;
+            }
+            kintsugi_core::Class::Catastrophic => {
+                let out = self.scorer.score(&cmd, m.class, &m.rule);
+                verdict.summary = Some(out.summary);
+                verdict.tier = 2;
+            }
+            kintsugi_core::Class::Safe => {}
+        }
         // Recoverer: snapshot the paths a *destructive* human command will touch,
         // so `kintsugi undo` can roll back a person's *filesystem* mistake (rm -rf,
         // a clobbering overwrite) the same way it rolls back an agent's. The shell

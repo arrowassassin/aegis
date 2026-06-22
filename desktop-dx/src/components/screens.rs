@@ -47,12 +47,27 @@ fn TimeCell(ts: String) -> Element {
 }
 
 /// The brand mark — renders the SVG inline via `dangerous_inner_html` so it
-/// never depends on the asset protocol. `size` controls the square box.
+/// never depends on the asset protocol. The source SVG hardcodes
+/// `width="64" height="64"`, so we strip those once on first call and serve a
+/// version that scales with the wrapper. `size` controls the square box.
+fn logo_svg_scalable() -> &'static str {
+    use std::sync::OnceLock;
+    static CLEANED: OnceLock<String> = OnceLock::new();
+    CLEANED.get_or_init(|| {
+        let mut s = crate::LOGO_SVG.to_string();
+        for attr in [r#" width="64""#, r#" height="64""#] {
+            s = s.replace(attr, "");
+        }
+        // Force the root svg to fill the wrapper and never carry intrinsic size.
+        s.replacen("<svg ", "<svg style=\"width:100%;height:100%;display:block\" ", 1)
+    })
+}
+
 #[component]
 pub fn LogoMark(size: u32) -> Element {
-    let svg = crate::LOGO_SVG;
+    let svg = logo_svg_scalable();
     rsx! {
-        div { style: "display:inline-block;width:{size}px;height:{size}px;flex:none",
+        div { style: "display:inline-flex;width:{size}px;height:{size}px;flex:none;line-height:0",
             dangerous_inner_html: "{svg}",
         }
     }

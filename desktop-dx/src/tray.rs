@@ -7,10 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem},
-    TrayIcon, TrayIconBuilder, TrayIconEvent,
-};
+use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 /// Cross-process flag the Dioxus side polls each tick — true when the tray was
 /// clicked (or "Show Kintsugi" was picked from the menu) and the main window
@@ -29,50 +26,33 @@ fn icon_image() -> Option<tray_icon::Icon> {
 /// alive). `None` on failure — we never want the app to crash because a tray
 /// couldn't be created.
 pub fn install_tray() -> Option<TrayIcon> {
-    let menu = Menu::new();
-    let item_show = MenuItem::new("Show Kintsugi", true, None);
-    let item_quit = MenuItem::new("Quit", true, None);
-    menu.append(&item_show).ok()?;
-    menu.append(&item_quit).ok()?;
-    let show_id = item_show.id().clone();
-    let quit_id = item_quit.id().clone();
-
+    // No menu: `muda` (which provides menus for tray-icon) registers an ObjC
+    // class on macOS, and dioxus-desktop already registers the same class —
+    // creating a menu segfaults. Without a menu, the user clicks the icon to
+    // bring the window to the front (still the core gesture).
     let icon = icon_image();
     let mut builder = TrayIconBuilder::new()
-        .with_tooltip("Kintsugi — guardrails for your AI agents (running)")
-        .with_menu(Box::new(menu));
+        .with_tooltip("Kintsugi — guardrails for your AI agents (running). Click to show.");
     if let Some(ico) = icon {
         builder = builder.with_icon(ico);
     }
     let tray = builder.build().ok()?;
 
-    // Background thread that bridges tray + menu events into the SHOW_REQUESTED
-    // flag (and quit). The receivers are global crossbeam channels — polling
-    // them on a dedicated thread keeps the integration runtime-agnostic.
+    // Background thread that listens for tray clicks and bumps SHOW_REQUESTED.
     std::thread::Builder::new()
         .name("kintsugi-tray".into())
         .spawn(move || {
             let tray_rx = TrayIconEvent::receiver();
-            let menu_rx = MenuEvent::receiver();
-            loop {
-                if let Ok(ev) = tray_rx.recv_timeout(std::time::Duration::from_millis(250)) {
-                    if matches!(
-                        ev,
-                        TrayIconEvent::Click {
-                            button: tray_icon::MouseButton::Left,
-                            button_state: tray_icon::MouseButtonState::Up,
-                            ..
-                        }
-                    ) {
-                        SHOW_REQUESTED.store(true, Ordering::SeqCst);
-                    }
-                }
-                while let Ok(ev) = menu_rx.try_recv() {
-                    if ev.id == show_id {
-                        SHOW_REQUESTED.store(true, Ordering::SeqCst);
-                    } else if ev.id == quit_id {
-                        std::process::exit(0);
-                    }
+            while let Ok(ev) = tray_rx.recv() {
+                if matches!(
+                    ev,
+                    TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Left,
+                        button_state: tray_icon::MouseButtonState::Up,
+                        ..
+                    } | TrayIconEvent::DoubleClick { .. }
+                ) {
+                    SHOW_REQUESTED.store(true, Ordering::SeqCst);
                 }
             }
         })

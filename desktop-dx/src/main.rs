@@ -99,11 +99,9 @@ fn main() {
         .with_window(window)
         .with_background_color((11, 13, 18, 255));
 
-    // Build the system tray BEFORE launching dioxus (macOS requires it on the
-    // main thread, which dioxus blocks below). The handle is held by `_tray` so
-    // it lives for the duration of the app — dropping it removes the icon.
-    let _tray = tray::install_tray();
-
+    // The system tray is installed AFTER dioxus starts (see `App::use_effect`).
+    // On macOS, NSStatusItem requires NSApplication to exist — touching the
+    // Cocoa AppKit before `dioxus::launch` initializes it segfaults.
     dioxus::LaunchBuilder::desktop()
         .with_cfg(cfg)
         .launch(App);
@@ -114,6 +112,16 @@ fn App() -> Element {
     // Provide the shared store to the whole tree (context = `this`).
     use_context_provider(Store::new);
     let mut store = use_context::<Store>();
+
+    // Install the system tray AFTER dioxus has set up the AppKit/GTK event loop.
+    // macOS needs NSApplication to exist before NSStatusItem is created (doing
+    // it earlier segfaults). We leak the handle on purpose so the icon lives
+    // for the whole session without us needing to thread a static through.
+    use_effect(|| {
+        if let Some(tray) = tray::install_tray() {
+            Box::leak(Box::new(tray));
+        }
+    });
 
     // Bridge the system tray to the window: when a left-click on the tray (or
     // "Show Kintsugi" from the menu) flips the flag, set the window visible +
