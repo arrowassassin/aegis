@@ -1,9 +1,9 @@
 //! Screens — wired to the REAL backend via `crate::bindings` (reads off the UI
 //! thread via spawn_blocking; fs-watch kept out of the main feed).
-use dioxus::prelude::*;
+use crate::data;
 use crate::state::{use_store, Screen, FEED_PAGE_SIZE};
 use crate::theme::{decision, Theme};
-use crate::data;
+use dioxus::prelude::*;
 
 const FADE: &str = "animation:kfade .3s ease;";
 
@@ -13,7 +13,10 @@ fn local_datetime(ts: &str) -> (String, String) {
     use chrono::{DateTime, Local};
     if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
         let l = dt.with_timezone(&Local);
-        return (l.format("%Y-%m-%d").to_string(), l.format("%H:%M:%S").to_string());
+        return (
+            l.format("%Y-%m-%d").to_string(),
+            l.format("%H:%M:%S").to_string(),
+        );
     }
     match ts.split_once('T') {
         Some((date, rest)) => (date.to_string(), rest.get(..8).unwrap_or(rest).to_string()),
@@ -24,14 +27,27 @@ fn local_datetime(ts: &str) -> (String, String) {
 /// Local date + time on one line — a bare clock is ambiguous across days.
 fn short_time(ts: &str) -> String {
     let (date, time) = local_datetime(ts);
-    if time.is_empty() { date } else { format!("{date} {time}") }
+    if time.is_empty() {
+        date
+    } else {
+        format!("{date} {time}")
+    }
 }
-fn clock(ts: &str) -> String { short_time(ts) }
+fn clock(ts: &str) -> String {
+    short_time(ts)
+}
 /// Map a TimelineRow outcome to the key decision() understands.
 fn outcome_key(o: &str) -> &'static str {
-    match o { "allowed" => "allowed", "held" => "held", "denied" => "blocked", _ => "blocked" }
+    match o {
+        "allowed" => "allowed",
+        "held" => "held",
+        "denied" => "blocked",
+        _ => "blocked",
+    }
 }
-fn outcome_decision(o: &str) -> &'static str { outcome_key(o) }
+fn outcome_decision(o: &str) -> &'static str {
+    outcome_key(o)
+}
 
 /// A timestamp table cell: time on top (prominent), date dimmed below. Keeps the
 /// full date+time readable in a narrow column without the ugly mid-string wrap.
@@ -59,7 +75,11 @@ fn logo_svg_scalable() -> &'static str {
             s = s.replace(attr, "");
         }
         // Force the root svg to fill the wrapper and never carry intrinsic size.
-        s.replacen("<svg ", "<svg style=\"width:100%;height:100%;display:block\" ", 1)
+        s.replacen(
+            "<svg ",
+            "<svg style=\"width:100%;height:100%;display:block\" ",
+            1,
+        )
     })
 }
 
@@ -91,10 +111,14 @@ pub fn SetupWizard() -> Element {
     // Real local-model state for step 3 — same source as Settings.
     let local_models = use_resource(move || async move {
         let _ = store.tick.read();
-        tokio::task::spawn_blocking(crate::bindings::available_models).await.unwrap_or_default()
+        tokio::task::spawn_blocking(crate::bindings::available_models)
+            .await
+            .unwrap_or_default()
     });
     let hf_suggested = use_resource(move || async move {
-        tokio::task::spawn_blocking(crate::bindings::hf_suggested).await.unwrap_or_default()
+        tokio::task::spawn_blocking(crate::bindings::hf_suggested)
+            .await
+            .unwrap_or_default()
     });
     let mut downloading = use_signal(|| None::<String>);
 
@@ -369,9 +393,14 @@ pub fn SetupWizard() -> Element {
 #[component]
 pub fn HelpDrawer() -> Element {
     let mut store = use_store();
-    if !*store.help_open.read() { return rsx! {} };
+    if !*store.help_open.read() {
+        return rsx! {};
+    };
 
-    struct Group { title: &'static str, items: &'static [(&'static str, &'static str)] }
+    struct Group {
+        title: &'static str,
+        items: &'static [(&'static str, &'static str)],
+    }
     static GROUPS: &[Group] = &[
         Group { title: "Live protection",
             items: &[
@@ -513,7 +542,11 @@ pub fn DetailDrawer() -> Element {
     let dec_key = outcome_key(&r.outcome);
     let (glyph, color) = decision(dec_key);
     let (class_label, class_st) = crate::data::risk_style(&r.class);
-    let decided_by = if r.tier >= 2 { "Local model · Tier 2" } else { "Deterministic rules · Tier 1" };
+    let decided_by = if r.tier >= 2 {
+        "Local model · Tier 2"
+    } else {
+        "Deterministic rules · Tier 1"
+    };
     let session = r.session.clone().unwrap_or_else(|| "—".to_string());
 
     rsx! {
@@ -589,7 +622,11 @@ pub fn DetailDrawer() -> Element {
 /// The settings toggle switch (used by the protection toggles in Settings).
 #[component]
 fn Toggle(on: bool, on_click: EventHandler<()>) -> Element {
-    let track = if on { "background:var(--gold)" } else { "background:var(--line)" };
+    let track = if on {
+        "background:var(--gold)"
+    } else {
+        "background:var(--line)"
+    };
     let knob = if on { "left:21px" } else { "left:3px" };
     rsx! {
         button { style: "flex:none;width:42px;height:24px;border-radius:13px;border:none;cursor:pointer;position:relative;transition:background .15s;{track}",
@@ -806,7 +843,12 @@ pub fn Feed() -> Element {
     };
 
     let cols = "grid-template-columns:64px 1fr 130px 124px 150px 110px;gap:14px";
-    let filters = [("all", "All"), ("held", "Held"), ("blocked", "Blocked"), ("tainted", "Tainted")];
+    let filters = [
+        ("all", "All"),
+        ("held", "Held"),
+        ("blocked", "Blocked"),
+        ("tainted", "Tainted"),
+    ];
 
     // Segment styles for the Agents / File-changes toggle (word + state, never color-alone).
     let agents_st = if !viewing_files {
@@ -966,7 +1008,9 @@ pub fn Held() -> Element {
     let rows = use_resource(move || async move {
         let _ = tick(); // refresh immediately after resolve()
         let _ = store.tick.read(); // live refresh on the heartbeat
-        tokio::task::spawn_blocking(crate::bindings::queue).await.unwrap_or_default()
+        tokio::task::spawn_blocking(crate::bindings::queue)
+            .await
+            .unwrap_or_default()
     });
     let loading = rows().is_none();
     let rows = rows().unwrap_or_default();
@@ -1133,7 +1177,6 @@ fn audit_class_style(class: &str) -> &'static str {
         _ => "color:var(--dim);border-color:var(--line)",
     }
 }
-
 
 /// Map a TimelineRow.outcome to the decision() glyph key ("denied" -> "blocked").
 fn audit_outcome_key(outcome: &str) -> &'static str {
@@ -1367,7 +1410,9 @@ fn prov_candidates(rows: &[crate::bindings::TimelineRow]) -> Vec<ProvCandidate> 
         if !r.provenance_block && r.session.is_none() {
             continue;
         }
-        let Some(session) = r.session.clone() else { continue };
+        let Some(session) = r.session.clone() else {
+            continue;
+        };
         if candidates.iter().any(|c| c.session == session) {
             continue;
         }
@@ -1392,7 +1437,9 @@ pub fn Provenance() -> Element {
     // sessions from the window), read off the UI thread on the slow tick.
     let rows_res = use_resource(move || async move {
         let _ = store.slow_tick.read();
-        tokio::task::spawn_blocking(|| crate::bindings::commands(200)).await.unwrap_or_default()
+        tokio::task::spawn_blocking(|| crate::bindings::commands(200))
+            .await
+            .unwrap_or_default()
     });
     let rows = rows_res().unwrap_or_default();
     let candidates = prov_candidates(&rows);
@@ -1633,26 +1680,67 @@ pub fn Recorder() -> Element {
     let blocked = shell.iter().filter(|r| r.outcome == "denied").count();
 
     let metrics: [(&str, String, &str, &str); 4] = [
-        ("Captured", total.to_string(), "color:var(--ink)", "commands on the chain"),
-        ("Destructive", destructive.to_string(),
-            if destructive > 0 { "color:var(--red)" } else { "color:var(--ink)" },
-            "rm / drop / overwrite"),
-        ("Held", held.to_string(),
-            if held > 0 { "color:var(--amber)" } else { "color:var(--ink)" },
-            "paused for review"),
-        ("Blocked", blocked.to_string(),
-            if blocked > 0 { "color:var(--red)" } else { "color:var(--ink)" },
-            "stopped before running"),
+        (
+            "Captured",
+            total.to_string(),
+            "color:var(--ink)",
+            "commands on the chain",
+        ),
+        (
+            "Destructive",
+            destructive.to_string(),
+            if destructive > 0 {
+                "color:var(--red)"
+            } else {
+                "color:var(--ink)"
+            },
+            "rm / drop / overwrite",
+        ),
+        (
+            "Held",
+            held.to_string(),
+            if held > 0 {
+                "color:var(--amber)"
+            } else {
+                "color:var(--ink)"
+            },
+            "paused for review",
+        ),
+        (
+            "Blocked",
+            blocked.to_string(),
+            if blocked > 0 {
+                "color:var(--red)"
+            } else {
+                "color:var(--ink)"
+            },
+            "stopped before running",
+        ),
     ];
 
     // Right-column capture sources (static posture rows from the design).
     let sources: [(&str, &str, &str, &str, &str); 3] = [
-        ("$PATH shim", "active", "color:var(--green)", "background:var(--green)",
-            "catches raw shell-outs & obfuscated execs the hook can't see"),
-        ("kintsugi record · PTY", "on demand", "color:var(--amber)", "background:var(--amber)",
-            "higher-assurance logged shell, survives inner-hook tampering"),
-        ("auditd / eBPF", "root floor", "color:var(--dim)", "background:var(--dim)",
-            "kernel-level attribution via auid through sudo/su"),
+        (
+            "$PATH shim",
+            "active",
+            "color:var(--green)",
+            "background:var(--green)",
+            "catches raw shell-outs & obfuscated execs the hook can't see",
+        ),
+        (
+            "kintsugi record · PTY",
+            "on demand",
+            "color:var(--amber)",
+            "background:var(--amber)",
+            "higher-assurance logged shell, survives inner-hook tampering",
+        ),
+        (
+            "auditd / eBPF",
+            "root floor",
+            "color:var(--dim)",
+            "background:var(--dim)",
+            "kernel-level attribution via auid through sudo/su",
+        ),
     ];
 
     let cols = "grid-template-columns:64px 150px 1fr 110px;gap:14px";
@@ -1848,7 +1936,9 @@ pub fn Snapshots() -> Element {
     let rows = use_resource(move || async move {
         let _ = tick(); // subscribe: a tick change re-runs this resource
         let _ = store.slow_tick.read(); // live refresh (undo is infrequent)
-        tokio::task::spawn_blocking(crate::bindings::snapshots).await.unwrap_or_default()
+        tokio::task::spawn_blocking(crate::bindings::snapshots)
+            .await
+            .unwrap_or_default()
     });
     let loading = rows().is_none();
     let rows = rows().unwrap_or_default();
@@ -1938,8 +2028,16 @@ pub fn Snapshots() -> Element {
 pub fn Settings() -> Element {
     let mut store = use_store();
     let theme = *store.theme.read();
-    let dark_st = if theme == Theme::Dark { "background:var(--gold);color:#1a1206;border-color:var(--gold)" } else { "background:var(--panel2);color:var(--dim)" };
-    let light_st = if theme == Theme::Light { "background:var(--gold);color:#1a1206;border-color:var(--gold)" } else { "background:var(--panel2);color:var(--dim)" };
+    let dark_st = if theme == Theme::Dark {
+        "background:var(--gold);color:#1a1206;border-color:var(--gold)"
+    } else {
+        "background:var(--panel2);color:var(--dim)"
+    };
+    let light_st = if theme == Theme::Light {
+        "background:var(--gold);color:#1a1206;border-color:var(--gold)"
+    } else {
+        "background:var(--panel2);color:var(--dim)"
+    };
     let search = store.model_search.read().to_lowercase();
 
     // ── refresh tick: any successful mutation bumps this so the resources re-run ──
@@ -1949,7 +2047,9 @@ pub fn Settings() -> Element {
     let status_res = use_resource(move || async move {
         let _ = tick();
         let _ = store.slow_tick.read(); // keep engine/scorer status live
-        tokio::task::spawn_blocking(crate::bindings::status).await.ok()
+        tokio::task::spawn_blocking(crate::bindings::status)
+            .await
+            .ok()
     });
     let status = status_res().flatten();
     let engine_running = status.as_ref().map(|s| s.running).unwrap_or(false);
@@ -1975,16 +2075,25 @@ pub fn Settings() -> Element {
     let model_configured_not_loaded = installed_model.is_some() && !model_active;
     let mut restart_pending = use_signal(|| false);
 
+    // ── software-update state (Settings → "Check for updates") ──
+    use crate::bindings::UpdateStatus;
+    let mut update_status = use_signal(|| None::<UpdateStatus>);
+    let mut update_busy = use_signal(|| false); // a check OR an install is in flight
+
     // Whether a master-password vault exists → set vs change form.
     let vault_res = use_resource(move || async move {
         let _ = tick();
-        tokio::task::spawn_blocking(crate::bindings::vault_provisioned).await.unwrap_or(false)
+        tokio::task::spawn_blocking(crate::bindings::vault_provisioned)
+            .await
+            .unwrap_or(false)
     });
     let provisioned = vault_res().unwrap_or(false);
 
     // Fail-closed is a real config marker: read once, write on toggle.
     let fc_initial = use_resource(move || async move {
-        tokio::task::spawn_blocking(crate::bindings::fail_closed).await.unwrap_or(false)
+        tokio::task::spawn_blocking(crate::bindings::fail_closed)
+            .await
+            .unwrap_or(false)
     });
     let mut fail_closed_sig = use_signal(|| false);
     use_effect(move || {
@@ -1998,12 +2107,12 @@ pub fn Settings() -> Element {
     let mut pw_cur = use_signal(String::new);
     let mut pw_new = use_signal(String::new);
     let mut pw_confirm = use_signal(String::new);
-    let mut pw_err = use_signal(String::new);       // inline error (e.g. wrong current pw)
+    let mut pw_err = use_signal(String::new); // inline error (e.g. wrong current pw)
     let mut recovery_key = use_signal(|| None::<String>); // shown ONCE on success
-    let mut pw_modal = use_signal(|| false);        // the change/set-password modal
+    let mut pw_modal = use_signal(|| false); // the change/set-password modal
     let mut pw_remove_modal = use_signal(|| false); // the separate REMOVE-password modal
     let mut pw_remove_field = use_signal(String::new); // its own field so it can't accidentally reuse pw_cur
-    // Uninstall confirmation modal (password + purge + type-to-confirm).
+                                                       // Uninstall confirmation modal (password + purge + type-to-confirm).
     let mut uninst_modal = use_signal(|| false);
     let mut uninst_pw = use_signal(String::new);
     let mut uninst_purge = use_signal(|| false);
@@ -2020,7 +2129,9 @@ pub fn Settings() -> Element {
     // Live Hugging Face search — re-runs as the query changes; empty → suggested.
     let hf_res = use_resource(move || async move {
         let q = store.model_search.read().clone();
-        tokio::task::spawn_blocking(move || crate::bindings::hf_search(&q)).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || crate::bindings::hf_search(&q))
+            .await
+            .unwrap_or_default()
     });
     let hf_loading = hf_res().is_none();
     let hf_models = hf_res().unwrap_or_default();
@@ -2030,19 +2141,25 @@ pub fn Settings() -> Element {
     // Live, REAL toggle state: the shell-recorder block and the OS service.
     let recording_res = use_resource(move || async move {
         let _ = tick();
-        tokio::task::spawn_blocking(crate::bindings::recording_installed).await.unwrap_or(false)
+        tokio::task::spawn_blocking(crate::bindings::recording_installed)
+            .await
+            .unwrap_or(false)
     });
     let recording_on = recording_res().unwrap_or(false);
     let service_res = use_resource(move || async move {
         let _ = tick();
-        tokio::task::spawn_blocking(crate::bindings::service_installed).await.unwrap_or(false)
+        tokio::task::spawn_blocking(crate::bindings::service_installed)
+            .await
+            .unwrap_or(false)
     });
     let service_on = service_res().unwrap_or(false);
 
     // Detected agent CLIs + per-hook install state (refreshes on tick).
     let hooks_res = use_resource(move || async move {
         let _ = tick();
-        tokio::task::spawn_blocking(crate::bindings::agent_hooks).await.unwrap_or_default()
+        tokio::task::spawn_blocking(crate::bindings::agent_hooks)
+            .await
+            .unwrap_or_default()
     });
     let agent_hooks = hooks_res().unwrap_or_default();
 
@@ -2093,6 +2210,78 @@ pub fn Settings() -> Element {
                 button { class: "kn-btn-ghost", style: "display:inline-flex;align-items:center;gap:8px;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 15px;cursor:pointer",
                     onclick: move |_| store.lock(),
                     "Lock now"
+                }
+            }
+
+            // ── software updates (mirrors `kintsugi update`) ──
+            div { style: "border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:18px;flex-wrap:wrap",
+                div { style: "flex:1;min-width:180px",
+                    div { style: "font-size:13.5px;font-weight:600", "Updates" }
+                    div { style: "font-size:12px;color:var(--dim);margin-top:2px",
+                        // The result line: idle prompt, the verdict, or an error.
+                        match &*update_status.read() {
+                            None => rsx!{ "Check GitHub for a newer Kintsugi release." },
+                            Some(UpdateStatus::UpToDate { version }) => rsx!{
+                                span { style: "color:var(--green)", "✓ Up to date" }
+                                " — you're on {version}."
+                            },
+                            Some(UpdateStatus::Available { current, latest }) => rsx!{
+                                span { style: "color:var(--gold);font-weight:700", "↑ Update available" }
+                                " — {current} → {latest}."
+                            },
+                            Some(UpdateStatus::Failed { message }) => rsx!{
+                                span { style: "color:var(--red)", "Check failed" }
+                                " — {message}"
+                            },
+                        }
+                    }
+                }
+                // Install button — only when a check found a newer release.
+                if matches!(&*update_status.read(), Some(UpdateStatus::Available { .. })) {
+                    button {
+                        class: "kn-btn-ghost",
+                        style: "font-family:inherit;font-size:12.5px;font-weight:700;color:#1a1206;background:var(--gold);border:1px solid var(--gold);border-radius:9px;padding:9px 15px;cursor:pointer",
+                        disabled: *update_busy.read(),
+                        onclick: move |_| {
+                            update_busy.set(true);
+                            store.toast(crate::state::ToastKind::Info, "Installing update — this can take a minute…");
+                            spawn(async move {
+                                let res = tokio::task::spawn_blocking(crate::bindings::apply_update).await;
+                                update_busy.set(false);
+                                match res {
+                                    Ok(Ok(_)) => {
+                                        update_status.set(None);
+                                        store.toast(crate::state::ToastKind::Success, "Updated. Restart the app to run the new version.");
+                                    }
+                                    Ok(Err(e)) => { store.toast(crate::state::ToastKind::Error, format!("Update failed: {e}")); }
+                                    Err(_) => { store.toast(crate::state::ToastKind::Error, "Update task crashed.".to_string()); }
+                                }
+                            });
+                        },
+                        if *update_busy.read() { "Installing…" } else { "Install update" }
+                    }
+                }
+                button {
+                    class: "kn-btn-ghost",
+                    style: "display:inline-flex;align-items:center;gap:8px;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 15px;cursor:pointer",
+                    disabled: *update_busy.read(),
+                    onclick: move |_| {
+                        update_busy.set(true);
+                        spawn(async move {
+                            let res = tokio::task::spawn_blocking(crate::bindings::check_for_update).await;
+                            update_busy.set(false);
+                            match res {
+                                Ok(status) => {
+                                    if let UpdateStatus::Failed { ref message } = status {
+                                        store.toast(crate::state::ToastKind::Error, format!("Couldn't check: {message}"));
+                                    }
+                                    update_status.set(Some(status));
+                                }
+                                Err(_) => { store.toast(crate::state::ToastKind::Error, "Update check crashed.".to_string()); }
+                            }
+                        });
+                    },
+                    if *update_busy.read() { "Checking…" } else { "Check for updates" }
                 }
             }
 

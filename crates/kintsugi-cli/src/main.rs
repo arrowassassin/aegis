@@ -52,6 +52,10 @@ enum Command {
         /// changes that bypass interception, so undo stays complete).
         #[arg(long)]
         no_watch: bool,
+        /// Skip the desktop Control Room step (don't register or offer to build
+        /// the GUI app). Useful on headless/server hosts.
+        #[arg(long)]
+        no_desktop: bool,
     },
     /// Show daemon, socket, log, and interception status.
     Status,
@@ -533,12 +537,13 @@ fn main() -> Result<()> {
             print_path,
             enterprise,
             no_watch,
+            no_desktop,
         }) => {
             if print_path {
                 println!("export PATH=\"{}:$PATH\"", shim_dir().display());
                 Ok(())
             } else {
-                cmd_init(no_daemon, enterprise, no_watch)
+                cmd_init(no_daemon, enterprise, no_watch, no_desktop)
             }
         }
         Some(Command::Status) => cmd_status(),
@@ -639,6 +644,84 @@ fn cmd_install_desktop() -> Result<()> {
         anyhow::bail!("the desktop installer exited with status {status}");
     }
     Ok(())
+}
+
+/// Complete the "install everything" promise during `kintsugi init`: register the
+/// desktop Control Room app, building it first if it isn't installed yet.
+///
+/// `cargo install kintsugi` only produces the CLI binaries — the GUI is a heavier
+/// crate (Dioxus + a system webview) that's kept separate so a CLI/headless
+/// install never has to pull GUI system libraries. So the end-to-end "install the
+/// desktop too" lives here, one step after the binary the user already ran:
+///   * already on PATH (a package install, or `cargo install kintsugi-control-room`)
+///     → just register it with the OS;
+///   * absent, interactive shell with a toolchain → offer to build it from the
+///     repo, then register;
+///   * absent, headless/no-toolchain (or the user declines) → print how to add it
+///     later and move on. This NEVER fails init.
+fn ensure_desktop_app() {
+    // Already installed? Register the OS integration (idempotent) and we're done.
+    if let Some(bin) = which_kintsugi_control_room() {
+        match std::process::Command::new(&bin).arg("--install").status() {
+            Ok(s) if s.success() => {
+                println!("  ✓ desktop: Control Room app registered");
+            }
+            _ => println!(
+                "  • desktop: found {} but couldn't register it — run `kintsugi install-desktop`",
+                bin.display()
+            ),
+        }
+        return;
+    }
+
+    let manual = format!(
+        "add it later with:\n      \
+         cargo install --git https://github.com/{UPDATE_REPO} kintsugi-control-room\n      \
+         kintsugi install-desktop\n    \
+         (or download a .dmg/.msi/.deb from https://github.com/{UPDATE_REPO}/releases)"
+    );
+
+    // Not present. Building the GUI from source is a one-time, multi-minute job that
+    // needs a C toolchain (and, on Linux, the webkit dev libs), so we ask first —
+    // `confirm` returns false on a non-interactive/headless host, which degrades to
+    // "just tell them how", never a surprise build or a failure.
+    let build = confirm(
+        "Desktop Control Room app isn't installed. Build & install it now? (one-time, a few minutes)",
+    )
+    .unwrap_or(false);
+    if !build {
+        println!("  • desktop: skipped — {manual}");
+        return;
+    }
+
+    println!("  … building the desktop Control Room app (one-time; this can take a few minutes)…");
+    let built = std::process::Command::new("cargo")
+        .args([
+            "install",
+            "--git",
+            &format!("https://github.com/{UPDATE_REPO}"),
+            "--locked",
+            "kintsugi-control-room",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !built {
+        println!(
+            "  • desktop: build didn't complete (needs a C toolchain; on Linux \
+             libwebkit2gtk-4.1-dev). {manual}"
+        );
+        return;
+    }
+    match which_kintsugi_control_room() {
+        Some(bin) => {
+            let _ = std::process::Command::new(&bin).arg("--install").status();
+            println!("  ✓ desktop: Control Room app built and registered");
+        }
+        None => println!(
+            "  • desktop: built, but couldn't find it to register — run `kintsugi install-desktop`"
+        ),
+    }
 }
 
 fn which_kintsugi_control_room() -> Option<PathBuf> {
@@ -1529,7 +1612,7 @@ pub(crate) fn shim_dir() -> PathBuf {
     std::env::temp_dir().join("kintsugi-shims")
 }
 
-fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
+fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool, no_desktop: bool) -> Result<()> {
     println!(
         "kintsugi init{}",
         if enterprise { " (enterprise)" } else { "" }
@@ -1621,6 +1704,16 @@ fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
             Ok(false) => {}
             Err(e) => println!("  • backstop watcher not started ({e})"),
         }
+    }
+
+    // 5. Desktop Control Room app. `cargo install kintsugi` ships only the CLI
+    // binaries (the GUI is a heavier, separate crate with webview deps), so this
+    // is where "install everything" is completed: if the app is already present
+    // we just register it with the OS; otherwise we offer to build it. The step
+    // never fails init — a headless/no-toolchain host just gets told how to add
+    // it later.
+    if !no_desktop {
+        ensure_desktop_app();
     }
 
     println!();

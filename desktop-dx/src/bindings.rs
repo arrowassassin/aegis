@@ -11,8 +11,8 @@
 
 use std::path::PathBuf;
 
-use kintsugi_app as app;
 pub use app::{ChainVerify, EngineStatus, Metrics, ProvenanceView, QueueRow, TimelineRow};
+use kintsugi_app as app;
 
 /// The desktop's marker for "first-run setup wizard already shown". Lives next
 /// to the event log so it survives daemon restarts and travels with the data dir.
@@ -146,7 +146,8 @@ pub fn stop_engine() -> anyhow::Result<()> {
     if locked {
         anyhow::bail!("password-required");
     }
-    Client::shutdown("shutdown", None, None).map_err(|e| anyhow::anyhow!("couldn't stop daemon: {e}"))
+    Client::shutdown("shutdown", None, None)
+        .map_err(|e| anyhow::anyhow!("couldn't stop daemon: {e}"))
 }
 
 /// Stop with the admin password — runs the full challenge/proof handshake. The
@@ -161,8 +162,9 @@ pub fn stop_engine_with_password(password: &str) -> anyhow::Result<()> {
         return Client::shutdown("shutdown", None, None).map_err(|e| anyhow::anyhow!("{e}"));
     }
     let nonce_bytes = hex::decode(&nonce).map_err(|e| anyhow::anyhow!("bad nonce: {e}"))?;
-    let proof = kintsugi_core::admin::compute_proof(password, &salt, params, &nonce_bytes, b"shutdown")
-        .map_err(|e| anyhow::anyhow!("couldn't derive proof: {e:?}"))?;
+    let proof =
+        kintsugi_core::admin::compute_proof(password, &salt, params, &nonce_bytes, b"shutdown")
+            .map_err(|e| anyhow::anyhow!("couldn't derive proof: {e:?}"))?;
     // Preserve the daemon's actual message. Only relabel the plain auth failure
     // as "wrong password" — lockout, degraded-vault, and "no auth key" messages
     // are distinct and actionable, and masking them sends the user down the
@@ -235,7 +237,11 @@ pub fn set_fail_closed(on: bool) -> std::io::Result<()> {
 /// from this detached crate, where the daemon lives in the main workspace target),
 /// else the bare name on `PATH`.
 fn daemon_exe() -> PathBuf {
-    let name = if cfg!(windows) { "kintsugi-daemon.exe" } else { "kintsugi-daemon" };
+    let name = if cfg!(windows) {
+        "kintsugi-daemon.exe"
+    } else {
+        "kintsugi-daemon"
+    };
 
     // Prefer the INSTALLED daemon (what `kintsugi init` puts on PATH / ~/.local/bin).
     // It's the user's real, model-capable build; a plain `cargo build` in the repo
@@ -313,7 +319,8 @@ pub fn set_master_password(password: &str) -> anyhow::Result<String> {
     }
     let prov = admin::provision(password, &admin::LockedSettings::default())
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    admin::save_vault(&admin::default_vault_path(), &prov.vault).map_err(|e| anyhow::anyhow!("{e}"))?;
+    admin::save_vault(&admin::default_vault_path(), &prov.vault)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(prov.recovery_key)
 }
 
@@ -433,7 +440,9 @@ pub struct LocalModel {
 /// dir `pick-model.sh` uses (`$KINTSUGI_MODEL_DIR` or `~/.local/share/kintsugi/models`).
 fn model_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(p) = kintsugi_model::config::configured_model().and_then(|p| p.parent().map(|x| x.to_path_buf())) {
+    if let Some(p) =
+        kintsugi_model::config::configured_model().and_then(|p| p.parent().map(|x| x.to_path_buf()))
+    {
         dirs.push(p);
     }
     if let Ok(d) = std::env::var("KINTSUGI_MODEL_DIR") {
@@ -448,16 +457,23 @@ fn model_dirs() -> Vec<PathBuf> {
 
 fn human_size(bytes: u64) -> String {
     let gb = bytes as f64 / 1e9;
-    if gb >= 1.0 { format!("{gb:.1} GB") } else { format!("{:.0} MB", bytes as f64 / 1e6) }
+    if gb >= 1.0 {
+        format!("{gb:.1} GB")
+    } else {
+        format!("{:.0} MB", bytes as f64 / 1e6)
+    }
 }
 
 /// Scan disk for the user's real downloaded `.gguf` models (no mock catalog).
 pub fn available_models() -> Vec<LocalModel> {
-    let active = kintsugi_model::config::configured_model().map(|p| p.to_string_lossy().to_string());
+    let active =
+        kintsugi_model::config::configured_model().map(|p| p.to_string_lossy().to_string());
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<LocalModel> = Vec::new();
     for dir in model_dirs() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             let path = e.path();
             if path.extension().and_then(|x| x.to_str()) != Some("gguf") {
@@ -468,8 +484,15 @@ pub fn available_models() -> Vec<LocalModel> {
                 continue;
             }
             out.push(LocalModel {
-                name: path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
-                size: e.metadata().ok().map(|m| human_size(m.len())).unwrap_or_default(),
+                name: path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                size: e
+                    .metadata()
+                    .ok()
+                    .map(|m| human_size(m.len()))
+                    .unwrap_or_default(),
                 active: active.as_deref() == Some(ps.as_str()),
                 path: ps,
             });
@@ -559,7 +582,9 @@ fn models_download_dir() -> PathBuf {
     if let Ok(d) = std::env::var("KINTSUGI_MODEL_DIR") {
         return PathBuf::from(d);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     home.join(".local/share/kintsugi/models")
 }
 
@@ -596,10 +621,23 @@ pub struct AgentHook {
 }
 
 fn kintsugi_bin() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".local/bin/kintsugi"))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from("kintsugi"))
+    let name = if cfg!(windows) {
+        "kintsugi.exe"
+    } else {
+        "kintsugi"
+    };
+    // The installed CLI, in install-order of likelihood: `kintsugi init`'s target,
+    // then a `cargo install kintsugi` location. A GUI app launched from the dock
+    // may have a minimal PATH, so probe the known dirs before falling back to PATH.
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for sub in [".local/bin", ".cargo/bin"] {
+            let p = home.join(sub).join(name);
+            if p.exists() {
+                return p;
+            }
+        }
+    }
+    PathBuf::from(name)
 }
 
 /// List detected agent CLIs + whether the Kintsugi hook is installed in each.
@@ -743,10 +781,7 @@ pub fn run_uninstall(password: &str, purge: bool) -> anyhow::Result<String> {
     let out = cmd.output()?;
     let s = String::from_utf8_lossy(&out.stdout).to_string();
     if !out.status.success() {
-        anyhow::bail!(
-            "uninstall failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        anyhow::bail!("uninstall failed: {}", String::from_utf8_lossy(&out.stderr));
     }
     Ok(s)
 }
@@ -782,7 +817,10 @@ pub fn policy_view() -> PolicyView {
     let cwd = std::env::current_dir().unwrap_or_default();
     let p = kintsugi_daemon::load_policy(&cwd);
     PolicyView {
-        mode: p.mode.map(|m| m.as_str().to_string()).unwrap_or_else(|| "attended".to_string()),
+        mode: p
+            .mode
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_else(|| "attended".to_string()),
         threshold: p.risk_threshold(),
         allow: p.rules.allow.clone(),
         deny: p.rules.deny.clone(),
@@ -790,17 +828,122 @@ pub fn policy_view() -> PolicyView {
     }
 }
 
+// ---- updates (Settings → "Check for updates") -----------------------------
+
+/// Result of a `kintsugi update --check` run, for the Settings update control.
+#[derive(Clone, PartialEq)]
+pub enum UpdateStatus {
+    /// Already on the latest release; carries the version string to show.
+    UpToDate { version: String },
+    /// A newer release exists.
+    Available { current: String, latest: String },
+    /// The check couldn't complete (offline, no CLI on PATH, …); carries why.
+    Failed { message: String },
+}
+
+/// Pull the first whitespace-delimited token that looks like a version
+/// (`1.2.3` / `v1.2.3`) out of a line — tolerant of surrounding prose.
+fn first_version_token(line: &str) -> Option<String> {
+    line.split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+        .map(|t| t.trim_start_matches('v').trim_end_matches('.'))
+        .find(|t| {
+            let mut parts = t.split('.');
+            parts.clone().count() >= 2
+                && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|t| t.to_string())
+}
+
+/// Ask the installed CLI whether a newer release exists — the GUI equivalent of
+/// `kintsugi update --check`. Shells out so the result is byte-for-byte the same
+/// logic (release lookup + version compare) the CLI uses; no duplicated policy.
+pub fn check_for_update() -> UpdateStatus {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["update", "--check"])
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return UpdateStatus::Failed {
+                message: format!("couldn't run the kintsugi CLI: {e}"),
+            }
+        }
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // "  ↑ update available: 0.2.1 → 0.3.0"
+    if let Some(idx) = text.find("update available:") {
+        let line = text[idx..].lines().next().unwrap_or("");
+        if let Some((cur, lat)) = line.split_once('→') {
+            if let (Some(current), Some(latest)) =
+                (first_version_token(cur), first_version_token(lat))
+            {
+                return UpdateStatus::Available { current, latest };
+            }
+        }
+    }
+    // "  ✓ up to date (latest release is v0.2.1)."
+    if let Some(line) = text.lines().find(|l| l.contains("up to date")) {
+        return UpdateStatus::UpToDate {
+            version: first_version_token(line).unwrap_or_else(|| "latest".to_string()),
+        };
+    }
+    UpdateStatus::Failed {
+        message: text
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("update check failed")
+            .trim()
+            .to_string(),
+    }
+}
+
+/// Download and install the latest release — the GUI equivalent of
+/// `kintsugi update --yes` (non-interactive, so no TTY prompt). Returns the CLI's
+/// summary on success. Heavy (downloads + may rebuild the model engine), so the
+/// caller runs it off the UI thread.
+pub fn apply_update() -> anyhow::Result<String> {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["update", "--yes"])
+        .output()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if !out.status.success() {
+        anyhow::bail!("{}", text.trim());
+    }
+    Ok(text.trim().to_string())
+}
+
 /// The built-in deterministic protections — always on, the heart of the gate.
 pub fn builtin_protections() -> Vec<(&'static str, &'static str)> {
     vec![
         ("Recursive delete", "rm -rf / rmdir on home or root"),
-        ("Force-push & history rewrite", "git push --force, reset --hard, filter-branch"),
+        (
+            "Force-push & history rewrite",
+            "git push --force, reset --hard, filter-branch",
+        ),
         ("Secret reads", ".env, ~/.ssh, ~/.aws, keychains"),
         ("Destructive SQL", "DROP TABLE, DELETE FROM, TRUNCATE"),
         ("Pipe-to-shell", "curl | sh, wget | bash"),
         ("Disk & device writes", "dd of=, mkfs, writes to /dev/*"),
-        ("Infrastructure teardown", "terraform destroy, kubectl delete, docker prune"),
-        ("Lethal trifecta", "untrusted content + secret read + egress → blocked"),
-        ("Self-protection", "uninstalling or deleting Kintsugi itself"),
+        (
+            "Infrastructure teardown",
+            "terraform destroy, kubectl delete, docker prune",
+        ),
+        (
+            "Lethal trifecta",
+            "untrusted content + secret read + egress → blocked",
+        ),
+        (
+            "Self-protection",
+            "uninstalling or deleting Kintsugi itself",
+        ),
     ]
 }

@@ -213,17 +213,21 @@ your platform has none), then walks you through wiring your agents and an
 curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
 ```
 
-Prefer Cargo? `cargo install kintsugi` installs all five CLI binaries in one shot.
+Prefer Cargo? `cargo install kintsugi` installs all five CLI binaries; then
+`kintsugi init` finishes the job — alongside wiring your agents, it **registers
+the desktop Control Room app, offering to build it if it isn't installed yet**
+(skipped on headless hosts or with `--no-desktop`). So `cargo install kintsugi &&
+kintsugi init` gets you everything, GUI included.
 
-**Want the desktop Control Room app?** Easiest is a packaged installer for your
-platform from the [latest release](https://github.com/arrowassassin/kintsugi/releases/latest):
+**Prefer a packaged installer?** Grab one for your platform from the
+[latest release](https://github.com/arrowassassin/kintsugi/releases/latest):
 **`.dmg`** (macOS), **`.msi`** (Windows), **`.deb` / `.AppImage`** (Linux) — it
 registers like any other app and first launch runs the setup wizard (password →
-optional model → initialize). From source it's a separate crate:
-`cargo install kintsugi-control-room`, then `kintsugi install-desktop` registers
-it with your OS (writes the macOS `.app` bundle, the Linux `.desktop` entry +
-icons, or the Windows Start-menu shortcut). `kintsugi uninstall` (password-gated)
-removes everything.
+optional model → initialize). To (re)register a desktop build by hand,
+`kintsugi install-desktop` writes the macOS `.app` bundle, the Linux `.desktop`
+entry + icons, or the Windows Start-menu shortcut; `kintsugi uninstall`
+(password-gated) removes everything. Keep it current from the app itself —
+**Settings → Check for updates** runs the same flow as `kintsugi update`.
 
 That's it — Kintsugi works immediately with **no model** (an offline heuristic
 scorer). The optional model just sharpens the plain-English summary and risk
