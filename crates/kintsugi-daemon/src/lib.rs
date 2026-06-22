@@ -116,6 +116,10 @@ pub struct Daemon {
     /// (Phase 6). The hook is one-shot per tool call, so this resident state is the
     /// only place that can count an agent retrying a blocked action across calls.
     denial_streak: RefCell<std::collections::HashMap<String, u32>>,
+    /// Caps how much model-inference time the recorder path can impose on the
+    /// single-threaded serve loop, so a flood of risky shell records can't starve
+    /// real hold/approve traffic. See [`ScoreBudget`].
+    score_budget: RefCell<ScoreBudget>,
 }
 
 /// Rate-limit + lockout for admin authentication. The daemon is the single
@@ -154,6 +158,55 @@ impl AuthThrottle {
     fn reset(&mut self) {
         self.failures = 0;
         self.locked_until = None;
+    }
+}
+
+/// Token-bucket budget for the *model scoring* on the recorder path.
+///
+/// The IPC serve loop is single-threaded: it reads one request, handles it to
+/// completion, then accepts the next. `record_shell` scores risky shell events
+/// with the local model so the Recorder rows can show a plain-English summary —
+/// but that scoring is one synchronous inference on the serve thread. A local
+/// peer (a runaway or compromised agent — the socket is owner-only, but that's
+/// exactly who we defend against) that floods the socket with risky `Observe`
+/// records would serialize one inference each and starve real hold/approve
+/// traffic, blinding the user's safety control plane. Crucially, that scoring is
+/// *cosmetic*: `record_shell` always records `Allow` (the command already ran),
+/// and the danger `class` rides along regardless. So under sustained load we
+/// shed the summary, not the record — the row is still logged with its class,
+/// just without the prose. `capacity` is the burst a quiet session banks;
+/// `refill_per_sec` is the steady ceiling on inferences/sec the recorder can
+/// impose on the serve thread.
+struct ScoreBudget {
+    tokens: f64,
+    capacity: f64,
+    refill_per_sec: f64,
+    last: std::time::Instant,
+}
+
+impl ScoreBudget {
+    fn new(capacity: f64, refill_per_sec: f64, now: std::time::Instant) -> Self {
+        Self {
+            tokens: capacity,
+            capacity,
+            refill_per_sec,
+            last: now,
+        }
+    }
+
+    /// Refill for elapsed time, then try to spend one token. Returns `false` when
+    /// the budget is exhausted — the caller skips the expensive scoring and falls
+    /// back to a rules-only (summary-less) record.
+    fn try_spend(&mut self, now: std::time::Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * self.refill_per_sec).min(self.capacity);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -242,6 +295,9 @@ impl Daemon {
             throttle: RefCell::new(AuthThrottle::default()),
             taint: RefCell::new(taint),
             denial_streak: RefCell::new(std::collections::HashMap::new()),
+            // Burst of 8 banked by a quiet session; steady ceiling of 4 model
+            // scorings/sec on the serve thread under a sustained recorder flood.
+            score_budget: RefCell::new(ScoreBudget::new(8.0, 4.0, std::time::Instant::now())),
         })
     }
 
@@ -878,19 +934,29 @@ impl Daemon {
         // details drawer can show a plain-English summary alongside the raw
         // command. The decision stays Allow — this is just metadata on a row
         // that's already an audit record of the past.
-        match m.class {
-            kintsugi_core::Class::Ambiguous => {
-                let out = self.scorer.score(&cmd, m.class, &m.rule);
-                verdict.summary = Some(out.summary);
+        //
+        // The model call is one synchronous inference on the single-threaded
+        // serve loop, so it's spent against a token-bucket budget: under a flood
+        // of risky records the budget empties and we record the row *without* the
+        // summary rather than let the recorder serialize unbounded inference and
+        // starve real hold/approve traffic. The class still rides in verdict.class
+        // either way, so the timeline never loses the danger signal — only the
+        // cosmetic prose. (Safe commands never score, so they never spend.)
+        let may_score = !matches!(m.class, kintsugi_core::Class::Safe)
+            && self
+                .score_budget
+                .borrow_mut()
+                .try_spend(std::time::Instant::now());
+        if may_score {
+            let out = self.scorer.score(&cmd, m.class, &m.rule);
+            verdict.summary = Some(out.summary);
+            verdict.tier = 2;
+            if m.class == kintsugi_core::Class::Ambiguous {
                 verdict.risk = Some(out.risk);
-                verdict.tier = 2;
             }
-            kintsugi_core::Class::Catastrophic => {
-                let out = self.scorer.score(&cmd, m.class, &m.rule);
-                verdict.summary = Some(out.summary);
-                verdict.tier = 2;
-            }
-            kintsugi_core::Class::Safe => {}
+        } else if m.class != kintsugi_core::Class::Safe {
+            // Budget shed: keep the danger tier on the row even without prose.
+            verdict.tier = 2;
         }
         // Recoverer: snapshot the paths a *destructive* human command will touch,
         // so `kintsugi undo` can roll back a person's *filesystem* mistake (rm -rf,
@@ -1126,5 +1192,51 @@ mod queue_entry_tests {
                 "{a} has no prompt → must queue"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod score_budget_tests {
+    use super::ScoreBudget;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn burst_is_bounded_then_refills_at_the_steady_rate() {
+        let t0 = Instant::now();
+        // Capacity 8, refill 4/sec.
+        let mut b = ScoreBudget::new(8.0, 4.0, t0);
+
+        // A flood at t0 spends the whole burst and no more — the 9th is shed, so
+        // a recorder flood can never serialize unbounded inference on the loop.
+        for i in 0..8 {
+            assert!(b.try_spend(t0), "burst token {i} should be granted");
+        }
+        assert!(!b.try_spend(t0), "9th in the same instant must be shed");
+
+        // After 1s, 4 tokens have refilled (the steady ceiling) — not the full 8.
+        let t1 = t0 + Duration::from_secs(1);
+        for i in 0..4 {
+            assert!(b.try_spend(t1), "refilled token {i} should be granted");
+        }
+        assert!(!b.try_spend(t1), "refill is rate-capped, not a full reset");
+    }
+
+    #[test]
+    fn refill_never_exceeds_capacity() {
+        let t0 = Instant::now();
+        let mut b = ScoreBudget::new(8.0, 4.0, t0);
+        for _ in 0..8 {
+            assert!(b.try_spend(t0));
+        }
+        // Idle far longer than it takes to refill — tokens cap at `capacity`, so a
+        // long-quiet session banks a burst of 8, never an unbounded backlog.
+        let later = t0 + Duration::from_secs(3600);
+        for i in 0..8 {
+            assert!(b.try_spend(later), "banked token {i} after a long idle");
+        }
+        assert!(
+            !b.try_spend(later),
+            "cap holds: no more than `capacity` banked"
+        );
     }
 }

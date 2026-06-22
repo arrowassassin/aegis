@@ -68,12 +68,22 @@ fn strip_hooks(home: &Path) -> Vec<String> {
     // Standalone kintsugi-only hook files: delete outright.
     for p in [
         home.join(".copilot/hooks/kintsugi.json"),
-        home.join(".gemini/antigravity-cli/hooks.json"),
         home.join(".config/opencode/plugin/kintsugi.js"),
     ] {
         if p.is_file() && std::fs::remove_file(&p).is_ok() {
             cleaned.push(p.display().to_string());
         }
+    }
+
+    // Antigravity installs into a kintsugi-owned plugin subtree
+    // (`~/.gemini/antigravity-cli/plugins/kintsugi/{hooks.json,...}`, see
+    // init::antigravity_hooks_config / antigravity_mcp_config). The whole
+    // directory is ours, so remove it wholesale — deleting a single guessed
+    // file used to leave the live hook behind, still firing at a now-absent
+    // binary after uninstall.
+    let antigravity_dir = home.join(".gemini/antigravity-cli/plugins/kintsugi");
+    if antigravity_dir.is_dir() && std::fs::remove_dir_all(&antigravity_dir).is_ok() {
+        cleaned.push(antigravity_dir.display().to_string());
     }
 
     for p in hook_files(home) {
