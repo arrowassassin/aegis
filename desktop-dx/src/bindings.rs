@@ -215,6 +215,29 @@ pub fn set_fail_closed(on: bool) -> std::io::Result<()> {
 /// else the bare name on `PATH`.
 fn daemon_exe() -> PathBuf {
     let name = if cfg!(windows) { "kintsugi-daemon.exe" } else { "kintsugi-daemon" };
+
+    // Prefer the INSTALLED daemon (what `kintsugi init` puts on PATH / ~/.local/bin).
+    // It's the user's real, model-capable build; a plain `cargo build` in the repo
+    // overwrites target/debug with a heuristic daemon (the `llama` feature is
+    // opt-in), so the dev-target walk-up is only a last resort.
+    if let Some(home) = std::env::var_os("HOME") {
+        for sub in [".local/bin", "bin"] {
+            let c = PathBuf::from(&home).join(sub).join(name);
+            if c.exists() {
+                return c;
+            }
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let c = dir.join(name);
+            if c.exists() {
+                return c;
+            }
+        }
+    }
+
+    // Dev fallback: a sibling of the app binary, then the repo target dir.
     if let Ok(cur) = std::env::current_exe() {
         if let Some(dir) = cur.parent() {
             let sib = dir.join(name);

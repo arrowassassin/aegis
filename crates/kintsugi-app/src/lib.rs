@@ -139,25 +139,17 @@ pub fn audit(
 /// Dashboard metric counts across the whole recorded timeline.
 pub fn metrics(db_path: &std::path::Path) -> anyhow::Result<Metrics> {
     let log = EventLog::open(db_path)?;
-    // Read the full timeline once and fold — the log is local and bounded by the
-    // dashboard's needs; a per-decision SQL count would be faster but this keeps the
-    // mapping in one place and the counts honest (trifecta needs the reason text).
-    let all = log.query(&Filter::default())?;
-    let mut m = Metrics {
-        total: all.len() as u64,
+    // SQL aggregation — folding every row in Rust did not scale past a few hundred
+    // thousand events (the dashboard showed stale zeros while it loaded).
+    let (allowed, held, denied, trifecta_blocks, total) = log.decision_metrics()?;
+    Ok(Metrics {
+        total,
+        allowed,
+        held,
+        denied,
+        trifecta_blocks,
         ..Default::default()
-    };
-    for e in &all {
-        match e.decision {
-            kintsugi_core::Decision::Allow => m.allowed += 1,
-            kintsugi_core::Decision::Hold => m.held += 1,
-            kintsugi_core::Decision::Deny => m.denied += 1,
-        }
-        if is_provenance_block(&e.reason) {
-            m.trifecta_blocks += 1;
-        }
-    }
-    Ok(m)
+    })
 }
 
 /// The tamper-evidence status of the append-only log (the audit screen's verify

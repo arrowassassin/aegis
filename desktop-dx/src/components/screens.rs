@@ -693,10 +693,11 @@ pub fn Audit() -> Element {
     let q = search.read().trim().to_string();
     let has_query = !q.is_empty();
 
-    // ── tamper-evidence chain: expensive (re-reads the whole log) — on the SLOW
-    //    tick only, off the UI thread, so a 4 Hz refresh never walks the chain.
+    // ── tamper-evidence chain: expensive — it hash-walks the ENTIRE log (can be
+    //    100k+ events). Verify ONCE on mount, off the UI thread; re-entering the
+    //    screen re-verifies. (Polling this every 2s on a huge log is what made the
+    //    "Verifying the chain…" spinner appear stuck.)
     let chain = use_resource(move || async move {
-        let _ = store.slow_tick.read();
         tokio::task::spawn_blocking(|| crate::bindings::verify())
             .await
             .unwrap_or(None)

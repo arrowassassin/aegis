@@ -929,6 +929,40 @@ impl EventLog {
             .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?)
     }
 
+    /// Dashboard counts via SQL aggregation — `(allowed, held, denied, trifecta,
+    /// total)`. O(scan) in SQLite but without materializing every row in Rust, so
+    /// it stays fast on a multi-hundred-thousand-row log (the in-Rust fold did not).
+    pub fn decision_metrics(&self) -> Result<(u64, u64, u64, u64, u64), LogError> {
+        let (mut allowed, mut held, mut denied) = (0i64, 0i64, 0i64);
+        let mut stmt = self
+            .conn
+            .prepare("SELECT decision, COUNT(*) FROM events GROUP BY decision")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (decision, n) = row?;
+            match decision.as_str() {
+                "allow" => allowed = n,
+                "hold" => held = n,
+                "deny" => denied = n,
+                _ => {}
+            }
+        }
+        let trifecta: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE reason LIKE '%TRIFECTA%'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((
+            allowed as u64,
+            held as u64,
+            denied as u64,
+            trifecta as u64,
+            (allowed + held + denied) as u64,
+        ))
+    }
+
     /// The highest sequence number (0 if empty). O(1) via the rowid index — cheap
     /// enough to poll so the TUI only reloads when the log actually grew.
     pub fn latest_seq(&self) -> Result<i64, LogError> {
