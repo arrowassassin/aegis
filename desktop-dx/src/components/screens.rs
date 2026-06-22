@@ -2678,9 +2678,30 @@ pub fn Settings() -> Element {
                                                 onclick: move |_| {
                                                     match crate::bindings::set_model(&path) {
                                                         Ok(()) => {
-                                                            model_msg.set("Selected — restart to load.".to_string());
-                                                            store.toast(crate::state::ToastKind::Success, "Model selected — restart to load.");
-                                                            restart_pending.set(true);
+                                                            // Auto-restart so the daemon loads the pick in one click,
+                                                            // like the CLI's `model use`. Reuse the in-memory session
+                                                            // password (present after unlock when a vault is set);
+                                                            // a plain start otherwise.
+                                                            let pw = store.session_pw.peek().clone();
+                                                            let restart = match pw {
+                                                                Some(p) => crate::bindings::restart_engine_with_password(&p),
+                                                                None => crate::bindings::start_engine(),
+                                                            };
+                                                            match restart {
+                                                                Ok(()) => {
+                                                                    restart_pending.set(false);
+                                                                    model_msg.set("Switched — the daemon restarted with this model.".to_string());
+                                                                    store.toast(crate::state::ToastKind::Success, "Model switched — daemon restarted with it.");
+                                                                }
+                                                                Err(e) => {
+                                                                    // The pick is saved; only the auto-restart failed —
+                                                                    // fall back to the manual Restart banner.
+                                                                    restart_pending.set(true);
+                                                                    let m = e.to_string();
+                                                                    model_msg.set(format!("Selected — auto-restart failed ({m}); use Restart to apply."));
+                                                                    store.toast(crate::state::ToastKind::Error, format!("Selected, but restart failed: {m}"));
+                                                                }
+                                                            }
                                                             let t = *tick.read(); tick.set(t + 1);
                                                         }
                                                         Err(e) => {
