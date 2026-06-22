@@ -179,6 +179,16 @@ below:
   app: tabbed **Timeline / Audit / Recorder** views over the live log, a vitals
   strip, one-key approve/deny/undo, a password login when locked, and an in-app
   settings panel — everything managed from one screen.
+- **A desktop Control Room.** For a point-and-click surface, the **Kintsugi
+  Control Room** is a native desktop app (macOS / Windows / Linux) that runs
+  in-process with the engine — same live log, no extra daemon. It adds a
+  first-launch **setup wizard** (password → optional model download → initialize),
+  live **Timeline / Held / Audit / Recorder** screens with a details drawer and
+  toast notifications, a **hook panel** that shows exactly which agent CLIs are
+  wired (with per-agent enable/disable and a refresh), live **Hugging Face model
+  search + download**, real settings toggles, password-gated uninstall, and a
+  **system-tray status** indicator (click to open). See
+  [`installing the desktop app`](#install) below.
 
 ## Crates
 
@@ -190,6 +200,8 @@ below:
 | `kintsugi` | the `kintsugi` binary: `init`, `status`, `stop`, `log`, `tui`, … |
 | `kintsugi-model` | Tier-2 scorer: heuristic by default, real GGUF behind `--features llama` |
 | `kintsugi-tui` | live `ratatui` timeline |
+| `kintsugi-app` | data-binding layer behind the desktop Control Room (shared with the GUI) |
+| `desktop-dx/` | the Dioxus desktop **Control Room** app (separate workspace; ships `.dmg`/`.msi`/`.deb`) |
 
 ## Install
 
@@ -201,7 +213,17 @@ your platform has none), then walks you through wiring your agents and an
 curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
 ```
 
-Prefer Cargo? `cargo install kintsugi` — installs all binaries in one shot.
+Prefer Cargo? `cargo install kintsugi` installs all five CLI binaries in one shot.
+
+**Want the desktop Control Room app?** Easiest is a packaged installer for your
+platform from the [latest release](https://github.com/arrowassassin/kintsugi/releases/latest):
+**`.dmg`** (macOS), **`.msi`** (Windows), **`.deb` / `.AppImage`** (Linux) — it
+registers like any other app and first launch runs the setup wizard (password →
+optional model → initialize). From source it's a separate crate:
+`cargo install kintsugi-control-room`, then `kintsugi install-desktop` registers
+it with your OS (writes the macOS `.app` bundle, the Linux `.desktop` entry +
+icons, or the Windows Start-menu shortcut). `kintsugi uninstall` (password-gated)
+removes everything.
 
 That's it — Kintsugi works immediately with **no model** (an offline heuristic
 scorer). The optional model just sharpens the plain-English summary and risk
@@ -214,8 +236,10 @@ with `kintsugi model install` (builds the engine + downloads a model — the pat
 Day-to-day: `kintsugi status`, `kintsugi tui` (live timeline), `kintsugi stop` (stop the
 daemon — the inverse of `init`). Also: `kintsugi log`, `kintsugi undo [--session]`,
 `kintsugi queue` / `approve <id>` / `deny <id>`, `kintsugi watch <path>`,
+`kintsugi hook` (list / enable / disable the per-agent CLI hooks),
 `kintsugi panic` / `resume`, `kintsugi update` (manual check + self-install from the
-latest GitHub release; `--check` to only report).
+latest GitHub release; `--check` to only report), and `kintsugi install-desktop` /
+`kintsugi uninstall` (password-gated) for the desktop app.
 Manage the optional model with `kintsugi model`: `status` (what's loaded and
 why), `use <path>` (point at any GGUF), `pick` (download one), `install` (build
 the engine + download — for `cargo install` users), `remove` (back to heuristic).
