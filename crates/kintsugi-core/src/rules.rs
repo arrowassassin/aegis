@@ -1282,6 +1282,22 @@ mod tests {
     }
 
     #[test]
+    fn egress_catalog_is_non_empty_and_mentions_the_core_channels() {
+        let cat = egress_channels();
+        assert!(!cat.is_empty());
+        let blob = cat
+            .iter()
+            .map(|(a, b)| format!("{a} {b}"))
+            .collect::<String>();
+        for needle in ["curl", "wget", "ssh", "git push"] {
+            assert!(
+                blob.contains(needle),
+                "egress catalog should mention {needle}"
+            );
+        }
+    }
+
+    #[test]
     fn empty_is_safe() {
         assert_eq!(class_of(""), Class::Safe);
         assert_eq!(class_of("   "), Class::Safe);

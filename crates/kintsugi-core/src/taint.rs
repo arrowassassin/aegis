@@ -495,6 +495,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn untrusted_source_catalog_covers_every_source_kind() {
+        // One displayed entry per SourceKind, with a non-empty label + detail —
+        // the Rules view advertises exactly the channels the engine taints from.
+        let cat = untrusted_sources();
+        assert_eq!(cat.len(), 8, "one row per SourceKind variant");
+        for (label, detail) in &cat {
+            assert!(!label.is_empty() && !detail.is_empty());
+        }
+        // describe() is the source of those rows; spot-check a couple.
+        assert_eq!(SourceKind::Web.describe().0, "Web fetch");
+        assert_eq!(SourceKind::Mcp.describe().0, "MCP tool output");
+    }
+
     // --- Trifecta truth table: exhaustive over all 8 boolean combinations. ----
     // Exhaustive enumeration is a complete proof for a 3-boolean predicate, so
     // this stands in for a property test (and adds no proptest dependency).
