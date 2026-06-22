@@ -157,23 +157,27 @@ impl AuthThrottle {
     }
 }
 
+/// Agents whose CLI shows a WORKING interactive y/N prompt for an ambiguous
+/// hold. For these, the hold is resolved by the agent's own UI, so a daemon
+/// queue entry would just orphan (no one ever calls `resolve_pending`).
+///
+/// Everyone else — Gemini, Antigravity, OpenCode (its plugin throws on `ask`),
+/// the `kintsugi-exec` MCP tool, and any future/unknown surface — has no
+/// interactive prompt, so the human resolves the hold via the queue (the Held
+/// screen / `kintsugi queue` / `approve`). Default to enqueueing, so a new
+/// agent never silently drops a hold the user can't recover.
+const AGENTS_WITH_NATIVE_ASK: &[&str] = &["claude-code", "qwen", "copilot", "cursor", "codex"];
+
 /// Does THIS held command need a daemon-side queue entry?
 ///
-/// Catastrophic always does (the dialect maps Hold→Deny so the agent can't
-/// resolve it). Ambiguous needs one ONLY for agents whose CLI lacks a native
-/// "ask" prompt (Gemini, Antigravity) — for those, the dialect also maps
-/// Hold→Deny, so the user has nowhere else to approve it.
-///
-/// For agents with native ask (Claude, Qwen, Copilot, Cursor, Codex, OpenCode),
-/// an ambiguous hold is the agent's own y/N prompt — enqueueing here would
-/// produce an orphan no one ever clears.
+/// Catastrophic always does (the dialect maps Hold→Deny, so the agent can't
+/// resolve it and the human runs it via `kintsugi run`). Ambiguous needs one
+/// for every agent EXCEPT those with a working native ask — see the constant.
 fn needs_queue_entry(cmd: &ProposedCommand, class: kintsugi_core::Class) -> bool {
     if class == kintsugi_core::Class::Catastrophic {
         return true;
     }
-    // Ambiguous: only agents WITHOUT a native "ask" leave the user nowhere
-    // else to resolve it.
-    matches!(cmd.agent.as_str(), "gemini" | "antigravity")
+    !AGENTS_WITH_NATIVE_ASK.contains(&cmd.agent.as_str())
 }
 
 impl Daemon {
@@ -1073,4 +1077,54 @@ pub fn run() -> Result<()> {
 /// Path to the daemon's PID file (next to the event log).
 pub fn pid_file_path() -> PathBuf {
     default_db_path().with_file_name("kintsugi.pid")
+}
+
+#[cfg(test)]
+mod queue_entry_tests {
+    use super::needs_queue_entry;
+    use kintsugi_core::{Class, ProposedCommand};
+
+    fn cmd(agent: &str) -> ProposedCommand {
+        ProposedCommand::new(
+            agent,
+            std::path::Path::new("/tmp"),
+            vec!["rm".into(), "x".into()],
+            "rm x",
+        )
+    }
+
+    #[test]
+    fn catastrophic_always_enqueues() {
+        for a in [
+            "claude-code",
+            "qwen",
+            "gemini",
+            "mcp",
+            "opencode",
+            "anything",
+        ] {
+            assert!(
+                needs_queue_entry(&cmd(a), Class::Catastrophic),
+                "catastrophic must queue for {a}"
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_skips_only_native_ask_agents() {
+        // Native ask → resolved by the agent's own prompt, so NO queue entry.
+        for a in ["claude-code", "qwen", "copilot", "cursor", "codex"] {
+            assert!(
+                !needs_queue_entry(&cmd(a), Class::Ambiguous),
+                "{a} has native ask → no queue orphan"
+            );
+        }
+        // No native ask → the human resolves via the queue, so it MUST enqueue.
+        for a in ["gemini", "antigravity", "opencode", "mcp", "future-agent"] {
+            assert!(
+                needs_queue_entry(&cmd(a), Class::Ambiguous),
+                "{a} has no prompt → must queue"
+            );
+        }
+    }
 }
