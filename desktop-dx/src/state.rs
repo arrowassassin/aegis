@@ -4,6 +4,17 @@
 use dioxus::prelude::*;
 use crate::theme::Theme;
 
+/// The four stops of the first-run setup wizard. `Welcome` is the intro;
+/// `Password` proposes setting a master password; `Model` proposes picking a
+/// local model; `Done` is the success card with a "What can it do?" pointer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WizardStep {
+    Welcome,
+    Password,
+    Model,
+    Done,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Success,
@@ -111,6 +122,11 @@ pub struct Store {
     /// `Store::toast(...)`; each entry auto-dismisses after a few seconds.
     pub toasts: Signal<Vec<Toast>>,
 
+    /// First-run setup wizard step (None = not active / dismissed).
+    pub wizard_step: Signal<Option<WizardStep>>,
+    /// Whether the always-available help drawer is open.
+    pub help_open: Signal<bool>,
+
     // live-refresh heartbeats. `tick` fires every 250ms and drives the light
     // reads (row lists, engine status); `slow_tick` fires every 2s for the heavy
     // aggregates (metrics full-scan, chain verify) so a 4 Hz refresh never
@@ -148,6 +164,8 @@ impl Store {
             model_search: Signal::new(String::new()),
             detail: Signal::new(None),
             toasts: Signal::new(Vec::new()),
+            wizard_step: Signal::new(None),
+            help_open: Signal::new(false),
             tick: Signal::new(0),
             slow_tick: Signal::new(0),
         }

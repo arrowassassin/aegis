@@ -14,6 +14,27 @@ use std::path::PathBuf;
 use kintsugi_app as app;
 pub use app::{ChainVerify, EngineStatus, Metrics, ProvenanceView, QueueRow, TimelineRow};
 
+/// The desktop's marker for "first-run setup wizard already shown". Lives next
+/// to the event log so it survives daemon restarts and travels with the data dir.
+fn setup_marker() -> PathBuf {
+    kintsugi_daemon::default_db_path().with_file_name("desktop-setup-done")
+}
+
+/// Has the user already completed (or skipped) the first-run setup wizard?
+pub fn setup_done() -> bool {
+    setup_marker().exists()
+}
+
+/// Mark the first-run setup as complete so the wizard never reappears unless
+/// the user clears the marker.
+pub fn mark_setup_done() -> anyhow::Result<()> {
+    let p = setup_marker();
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&p, b"ok\n").map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 fn db() -> PathBuf {
     kintsugi_daemon::default_db_path()
 }

@@ -46,6 +46,367 @@ fn TimeCell(ts: String) -> Element {
     }
 }
 
+/// First-run setup wizard — four steps that introduce Kintsugi, propose
+/// setting a master password, propose picking a local model, then finish.
+/// All steps are optional (Skip moves on); the user can always set things up
+/// later from Settings. Mounted at the app shell as a full-screen overlay.
+#[component]
+pub fn SetupWizard() -> Element {
+    let mut store = use_store();
+    let step = store.wizard_step.read().clone();
+    let Some(step) = step else { return rsx! {} };
+
+    let mut pw_new = use_signal(String::new);
+    let mut pw_confirm = use_signal(String::new);
+    let mut pw_err = use_signal(String::new);
+    let mut recovery_key = use_signal(|| None::<String>);
+
+    // Real local-model state for step 3 — same source as Settings.
+    let local_models = use_resource(move || async move {
+        let _ = store.tick.read();
+        tokio::task::spawn_blocking(crate::bindings::available_models).await.unwrap_or_default()
+    });
+    let hf_suggested = use_resource(move || async move {
+        tokio::task::spawn_blocking(crate::bindings::hf_suggested).await.unwrap_or_default()
+    });
+    let mut downloading = use_signal(|| None::<String>);
+
+    let mut dismiss = move |finalize: bool| {
+        if finalize {
+            let _ = crate::bindings::mark_setup_done();
+        }
+        store.wizard_step.set(None);
+    };
+
+    let step_index = match step {
+        crate::state::WizardStep::Welcome => 0usize,
+        crate::state::WizardStep::Password => 1,
+        crate::state::WizardStep::Model => 2,
+        crate::state::WizardStep::Done => 3,
+    };
+    let step_label = ["Welcome", "Password", "Model", "Done"];
+
+    rsx! {
+        div { style: "position:fixed;inset:0;z-index:90;background:rgba(8,10,14,.92);display:flex;align-items:center;justify-content:center;animation:kfade .2s ease;backdrop-filter:blur(6px)",
+            div { style: "width:620px;max-width:94vw;max-height:88vh;overflow-y:auto;background:var(--bg2);border:1px solid var(--gold-line);border-radius:16px;box-shadow:0 40px 100px rgba(0,0,0,.6);padding:0",
+
+                // Stepper header — gold pill per step, current is filled.
+                div { style: "display:flex;align-items:center;gap:8px;padding:18px 24px 12px;border-bottom:1px solid var(--hair)",
+                    span { style: "font-size:14px;font-weight:700;letter-spacing:-.1px", "Welcome to Kintsugi" }
+                    div { style: "margin-left:auto;display:flex;align-items:center;gap:7px",
+                        for (i, lbl) in step_label.iter().enumerate() {
+                            {
+                                let (bg, fg) = if i == step_index {
+                                    ("var(--gold)", "#1a1206")
+                                } else if i < step_index {
+                                    ("rgba(212,175,55,.25)", "var(--gold)")
+                                } else {
+                                    ("var(--panel2)", "var(--dim)")
+                                };
+                                let lbl_color = if i == step_index { "var(--ink)" } else { "var(--dim)" };
+                                let n = i + 1;
+                                rsx! {
+                                    div { style: "display:inline-flex;align-items:center;gap:6px",
+                                        span { style: "display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:{bg};color:{fg};font-size:11px;font-weight:700", "{n}" }
+                                        span { style: "font-size:11px;font-weight:600;color:{lbl_color}", "{lbl}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    button { style: "margin-left:6px;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--dim);font-size:15px;cursor:pointer",
+                        onclick: move |_| dismiss(true),
+                        title: "Close — you can re-run setup from Settings.",
+                        "×"
+                    }
+                }
+
+                // Step body.
+                div { style: "padding:24px 28px 12px",
+                    match step {
+                        crate::state::WizardStep::Welcome => rsx! {
+                            div { style: "display:flex;flex-direction:column;align-items:center;text-align:center;margin-bottom:10px",
+                                img { src: crate::LOGO, width: "56", height: "56", alt: "Kintsugi" }
+                                div { style: "font-size:20px;font-weight:700;letter-spacing:-.2px;margin-top:14px", "Local-first guardrails for AI agents" }
+                                div { style: "font-size:13.5px;color:var(--dim);line-height:1.6;margin-top:8px;max-width:480px",
+                                    "Kintsugi watches every command your coding agent (Claude, Codex, Cursor, etc.) tries to run. It allows safe ones, holds the ambiguous, and blocks the catastrophic — locally, with a tamper-evident audit log."
+                                }
+                            }
+                            ul { style: "list-style:none;padding:0;margin:18px auto 0;max-width:460px;display:flex;flex-direction:column;gap:8px;font-size:13px",
+                                li { style: "display:flex;gap:10px;align-items:flex-start", span { style: "color:var(--green);font-weight:700;flex:none", "✓" } "Nothing leaves your machine — the local model summarizes commands." }
+                                li { style: "display:flex;gap:10px;align-items:flex-start", span { style: "color:var(--green);font-weight:700;flex:none", "✓" } "Two minutes of setup: a password (so only you can stop it) and an optional model." }
+                                li { style: "display:flex;gap:10px;align-items:flex-start", span { style: "color:var(--green);font-weight:700;flex:none", "✓" } "Every step here is optional — you can configure all of it later from Settings." }
+                            }
+                        },
+                        crate::state::WizardStep::Password => rsx! {
+                            div { style: "font-size:18px;font-weight:700", "Set a master password" }
+                            div { style: "font-size:12.5px;color:var(--gold);margin-top:4px;font-weight:600", "Recommended" }
+                            div { style: "font-size:13px;color:var(--dim);line-height:1.55;margin-top:10px;margin-bottom:18px",
+                                "Without a password an agent that compromises your shell could "
+                                b { style: "color:var(--ink)", "stop Kintsugi itself" }
+                                ". The password gates shutdown and \"loosening\" operations. It is verified locally — never sent anywhere."
+                            }
+                            if let Some(key) = recovery_key.read().clone() {
+                                div { style: "border:1px solid var(--gold-line);border-radius:10px;background:rgba(212,175,55,.07);padding:13px 15px;margin-bottom:14px",
+                                    div { style: "font-size:12px;font-weight:700;color:var(--gold);display:flex;align-items:center;gap:7px",
+                                        span { "⚠" }
+                                        "Save this recovery key — shown once, never again."
+                                    }
+                                    div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;color:#e7ecf6;margin-top:9px;background:var(--term);border:1px solid var(--line);border-radius:8px;padding:11px 13px;overflow-x:auto;white-space:nowrap", "{key}" }
+                                }
+                            } else {
+                                div { style: "display:flex;flex-direction:column;gap:9px",
+                                    input { r#type: "password", class: "kn-input", value: "{pw_new}", placeholder: "Pick a password",
+                                        style: "height:36px;box-sizing:border-box;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-family:inherit;font-size:13px;outline:none",
+                                        oninput: move |e| { pw_new.set(e.value()); pw_err.set(String::new()); },
+                                    }
+                                    input { r#type: "password", class: "kn-input", value: "{pw_confirm}", placeholder: "Confirm",
+                                        style: "height:36px;box-sizing:border-box;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-family:inherit;font-size:13px;outline:none",
+                                        oninput: move |e| { pw_confirm.set(e.value()); pw_err.set(String::new()); },
+                                    }
+                                    if !pw_err.read().is_empty() {
+                                        div { style: "font-size:12px;color:var(--red);display:inline-flex;align-items:center;gap:6px",
+                                            span { "⛔" }
+                                            "{pw_err}"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        crate::state::WizardStep::Model => rsx! {
+                            div { style: "font-size:18px;font-weight:700", "Pick a local model" }
+                            div { style: "font-size:12.5px;color:var(--gold);margin-top:4px;font-weight:600", "Recommended" }
+                            div { style: "font-size:13px;color:var(--dim);line-height:1.55;margin-top:10px;margin-bottom:16px",
+                                "The local model writes the plain-English summary you see when a command is held — without it, you only get the rule name. Models run entirely on-device."
+                            }
+                            // Already-on-disk picks (instant)
+                            if let Some(local) = local_models() {
+                                if !local.is_empty() {
+                                    div { style: "font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin-bottom:7px", "Already on disk" }
+                                    div { style: "display:flex;flex-direction:column;gap:7px;margin-bottom:16px",
+                                        for m in local.iter().take(3).cloned() {
+                                            {
+                                                let path = m.path.clone();
+                                                let name = m.name.clone();
+                                                rsx! {
+                                                    div { style: "display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:10px 13px",
+                                                        div { style: "flex:1;min-width:0",
+                                                            span { style: "display:block;font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{name}" }
+                                                            div { style: "font-size:11px;color:var(--dim);margin-top:2px", "{m.size} · on disk" }
+                                                        }
+                                                        button { style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:7px;padding:7px 12px;cursor:pointer",
+                                                            onclick: move |_| {
+                                                                let _ = crate::bindings::set_model(&path);
+                                                                store.toast(crate::state::ToastKind::Success, "Model selected — finishing setup will restart the daemon.");
+                                                                store.wizard_step.set(Some(crate::state::WizardStep::Done));
+                                                            },
+                                                            "Use this"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Suggested from Hugging Face
+                            div { style: "font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin-bottom:7px", "Suggested on Hugging Face" }
+                            if hf_suggested().is_none() {
+                                Loader { label: "Loading suggestions…".to_string() }
+                            } else {
+                                div { style: "display:flex;flex-direction:column;gap:7px",
+                                    for m in hf_suggested().unwrap_or_default().iter().take(3).cloned() {
+                                        {
+                                            let id = m.id.clone();
+                                            let is_dl = downloading.read().as_deref() == Some(m.id.as_str());
+                                            rsx! {
+                                                div { style: "display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:10px 13px",
+                                                    div { style: "flex:1;min-width:0",
+                                                        span { style: "display:block;font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{m.id}" }
+                                                        div { style: "font-size:11px;color:var(--dim);margin-top:2px", "{m.downloads} downloads · ~2 GB" }
+                                                    }
+                                                    if is_dl {
+                                                        span { style: "flex:none;font-size:12px;color:var(--gold);display:inline-flex;align-items:center;gap:7px",
+                                                            span { style: "width:12px;height:12px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--gold);animation:kspin .7s linear infinite" }
+                                                            "Downloading…"
+                                                        }
+                                                    } else {
+                                                        button { style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:7px;padding:7px 12px;cursor:pointer",
+                                                            onclick: move |_| {
+                                                                let id_s = id.clone();
+                                                                let mut downloading = downloading;
+                                                                downloading.set(Some(id_s.clone()));
+                                                                store.toast(crate::state::ToastKind::Info, "Downloading — runs in the background; you can keep going.");
+                                                                spawn(async move {
+                                                                    let id2 = id_s.clone();
+                                                                    let res = tokio::task::spawn_blocking(move || crate::bindings::download_model(&id2)).await;
+                                                                    match res {
+                                                                        Ok(Ok(_)) => { store.toast(crate::state::ToastKind::Success, format!("Downloaded {id_s} — select it from Settings.")); }
+                                                                        Ok(Err(e)) => { store.toast(crate::state::ToastKind::Error, format!("Download failed: {e}")); }
+                                                                        Err(_) => { store.toast(crate::state::ToastKind::Error, "Download task crashed.".to_string()); }
+                                                                    }
+                                                                    downloading.set(None);
+                                                                });
+                                                            },
+                                                            "Download"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        crate::state::WizardStep::Done => rsx! {
+                            div { style: "display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px",
+                                span { style: "display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:16px;background:rgba(90,247,142,.13);color:var(--green);font-size:30px;font-weight:700", "✓" }
+                                div { style: "font-size:20px;font-weight:700;margin-top:14px", "You're protected." }
+                                div { style: "font-size:13.5px;color:var(--dim);margin-top:8px;line-height:1.55;max-width:440px",
+                                    "Kintsugi is watching. Open the "
+                                    b { style: "color:var(--ink)", "?" }
+                                    " button anytime for a tour of everything it can do, or jump straight to Activity to see your agents in real time."
+                                }
+                            }
+                        },
+                    }
+                }
+
+                // Footer — Skip / Back / Next.
+                div { style: "display:flex;align-items:center;gap:10px;padding:14px 24px 18px;margin-top:8px;border-top:1px solid var(--hair)",
+                    button { style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--dim);background:transparent;border:none;cursor:pointer",
+                        onclick: move |_| dismiss(true),
+                        if step_index < 3 { "Skip setup" } else { "Close" }
+                    }
+                    div { style: "margin-left:auto;display:flex;align-items:center;gap:10px",
+                        if step_index > 0 && step_index < 3 {
+                            button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:13px;font-weight:600;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 16px;cursor:pointer",
+                                onclick: move |_| {
+                                    let next = match step {
+                                        crate::state::WizardStep::Password => crate::state::WizardStep::Welcome,
+                                        crate::state::WizardStep::Model => crate::state::WizardStep::Password,
+                                        _ => return,
+                                    };
+                                    store.wizard_step.set(Some(next));
+                                },
+                                "Back"
+                            }
+                        }
+                        button { class: "kn-btn-gold", style: "font-family:inherit;font-size:13px;font-weight:600;color:#1a1206;background:var(--gold);border:none;border-radius:9px;padding:10px 20px;cursor:pointer",
+                            onclick: move |_| {
+                                match step {
+                                    crate::state::WizardStep::Welcome => store.wizard_step.set(Some(crate::state::WizardStep::Password)),
+                                    crate::state::WizardStep::Password => {
+                                        // If they typed a password, set it; else skip.
+                                        let new = pw_new.read().clone();
+                                        if new.is_empty() {
+                                            store.wizard_step.set(Some(crate::state::WizardStep::Model));
+                                            return;
+                                        }
+                                        if new != *pw_confirm.read() {
+                                            pw_err.set("The two passwords don't match.".to_string());
+                                            return;
+                                        }
+                                        match crate::bindings::set_master_password(&new) {
+                                            Ok(key) => {
+                                                recovery_key.set(Some(key));
+                                                store.session_pw.set(Some(zeroize::Zeroizing::new(new.clone())));
+                                                store.toast(crate::state::ToastKind::Success, "Master password set.");
+                                                // Stay on the password step so the recovery key shows; user clicks Next again to advance.
+                                                store.wizard_step.set(Some(crate::state::WizardStep::Password));
+                                            }
+                                            Err(e) => pw_err.set(e.to_string()),
+                                        }
+                                    }
+                                    crate::state::WizardStep::Model => store.wizard_step.set(Some(crate::state::WizardStep::Done)),
+                                    crate::state::WizardStep::Done => dismiss(true),
+                                }
+                            },
+                            match step {
+                                crate::state::WizardStep::Welcome => "Get started →",
+                                crate::state::WizardStep::Password => if recovery_key.read().is_some() { "I've saved it — next" } else if !pw_new.read().is_empty() { "Set password" } else { "Skip" },
+                                crate::state::WizardStep::Model => "Continue",
+                                crate::state::WizardStep::Done => "Open the app",
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Always-available cheatsheet of what Kintsugi can do. Opened via the "?"
+/// button in the sidebar footer. Lives in its own slide-in panel so it never
+/// blocks the screen behind it.
+#[component]
+pub fn HelpDrawer() -> Element {
+    let mut store = use_store();
+    if !*store.help_open.read() { return rsx! {} };
+
+    struct Group { title: &'static str, items: &'static [(&'static str, &'static str)] }
+    static GROUPS: &[Group] = &[
+        Group { title: "Live protection",
+            items: &[
+                ("Activity", "every command your agents try — allowed, held, blocked, live."),
+                ("Needs review", "ambiguous commands waiting on your decision (only the ones Kintsugi can't resolve via the agent's own prompt)."),
+                ("Where it came from", "the provenance trail when untrusted content influences a command (the lethal trifecta)."),
+                ("Panic", "halts ALL agent actions instantly while keeping the engine on. Different from Stop, which powers Kintsugi off."),
+            ] },
+        Group { title: "Records",
+            items: &[
+                ("History", "what Kintsugi held or blocked — tamper-evidence chain re-verifies on entry."),
+                ("Rules", "the deterministic floor: which built-in protections are armed + your effective policy."),
+                ("Undo", "every snapshot of a destructive op, one click from rollback."),
+            ] },
+        Group { title: "Setup",
+            items: &[
+                ("Master password", "argon2id-sealed — gates stopping and loosening. Verified locally, never sent."),
+                ("Local model", "browse Hugging Face or pick from disk; deletes are two-step. Drives the plain-English summaries."),
+                ("Agent CLI hooks", "per-CLI on/off + refresh — see every agent Kintsugi is wired into."),
+                ("Recorder", "describes shell commands with the model summary and (gated) asks before risky ones."),
+                ("Fail-closed / Auto-restart", "real toggles; the recorder writes a fenced block in your shell rc."),
+                ("Uninstall", "password-gated, optional data purge, plan + type-to-confirm."),
+            ] },
+        Group { title: "Click any activity row",
+            items: &[
+                ("Details drawer", "raw command, decision, the model's summary, agent, session, working dir, rule, tier, event id, plus a jump to provenance for tainted commands."),
+            ] },
+    ];
+
+    rsx! {
+        div { style: "position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.45);display:flex;justify-content:flex-end;animation:kfade .15s ease",
+            onclick: move |_| store.help_open.set(false),
+            div { style: "width:520px;max-width:94vw;height:100%;background:var(--bg2);border-left:1px solid var(--line);box-shadow:-24px 0 60px rgba(0,0,0,.45);overflow-y:auto",
+                onclick: move |e| e.stop_propagation(),
+                div { style: "position:sticky;top:0;background:var(--bg2);display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid var(--line);z-index:1",
+                    span { style: "font-size:15px;font-weight:700;letter-spacing:-.1px", "Everything Kintsugi can do" }
+                    button { style: "margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--dim);font-size:17px;cursor:pointer",
+                        onclick: move |_| store.help_open.set(false),
+                        "×"
+                    }
+                }
+                div { style: "padding:6px 22px 22px",
+                    for g in GROUPS.iter() {
+                        div { style: "margin-top:18px;font-size:10.5px;font-weight:700;letter-spacing:.7px;color:var(--gold);text-transform:uppercase", "{g.title}" }
+                        for (title, body) in g.items.iter() {
+                            div { style: "padding:11px 0;border-bottom:1px solid var(--hair)",
+                                div { style: "font-size:13px;font-weight:600;color:var(--ink)", "{title}" }
+                                div { style: "font-size:12px;color:var(--dim);margin-top:3px;line-height:1.5", "{body}" }
+                            }
+                        }
+                    }
+                    div { style: "margin-top:18px;font-size:11.5px;color:var(--dim);line-height:1.55",
+                        "Need to re-run the setup wizard? Open Settings → Uninstall (or just reset by deleting "
+                        span { style: "font-family:'IBM Plex Mono',monospace;color:var(--ink)", "~/Library/Application Support/kintsugi/desktop-setup-done" }
+                        ")."
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Bottom-right stack of transient notifications driven by `Store::toasts`.
 /// Each toast auto-dismisses after 3.5s; click × to dismiss early.
 #[component]

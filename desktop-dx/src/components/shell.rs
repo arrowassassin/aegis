@@ -117,9 +117,15 @@ pub fn Sidebar() -> Element {
             }
             div { style: "margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px;{center}",
                 span { style: "display:inline-flex;width:9px;height:9px;border-radius:50%;background:{dot};box-shadow:0 0 0 3px {glow};animation:kpulse 2.4s infinite;flex:none" }
-                div { style: "line-height:1.3;{label_hide}",
+                div { style: "line-height:1.3;{label_hide};flex:1;min-width:0",
                     div { style: "font-size:12.5px;font-weight:600", "{st_title}" }
                     div { style: "font-size:11px;color:var(--dim)", "{st_sub}" }
+                }
+                // Always-available cheatsheet of everything the app can do.
+                button { title: "What can Kintsugi do?",
+                    style: "flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--gold);font-size:14px;font-weight:700;cursor:pointer",
+                    onclick: move |_| { let mut s = store; let v = *s.help_open.peek(); s.help_open.set(!v); },
+                    "?"
                 }
             }
         }

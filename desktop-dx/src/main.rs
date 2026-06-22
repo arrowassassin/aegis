@@ -22,8 +22,50 @@ pub const STYLES: Asset = asset!("/assets/styles.css");
 
 /// The 256-px window icon, rasterized from the brand SVG at build time.
 const ICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-256.png"));
+/// All sizes baked into the binary, so the self-install registers full icon sets.
+const ICON_PNG_16: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-16.png"));
+const ICON_PNG_32: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-32.png"));
+const ICON_PNG_64: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-64.png"));
+const ICON_PNG_128: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-128.png"));
+const ICON_PNG_512: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-512.png"));
+
+mod install;
 
 fn main() {
+    // Self-install flags so `cargo install kintsugi-control-room && kintsugi-control-room --install`
+    // registers the OS-level desktop entry (mac .app, Linux .desktop). Same code
+    // path as install.sh, but with the icons embedded in the binary.
+    let mut args = std::env::args().skip(1);
+    if let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--install" => {
+                if let Err(e) = install::install_app() {
+                    eprintln!("install failed: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "--uninstall" => {
+                if let Err(e) = install::uninstall_app() {
+                    eprintln!("uninstall failed: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "Kintsugi Control Room\n\n\
+                     Usage:\n  \
+                     kintsugi-control-room          launch the app\n  \
+                     kintsugi-control-room --install     register as a desktop app (mac .app / Linux .desktop)\n  \
+                     kintsugi-control-room --uninstall   reverse --install\n"
+                );
+                return;
+            }
+            _ => { /* fall through */ }
+        }
+    }
+
     use dioxus::desktop::{tao::window::Icon, Config, LogicalSize, WindowBuilder};
 
     // Decode the embedded PNG into RGBA for the OS-level window icon. If
@@ -54,7 +96,17 @@ fn main() {
 fn App() -> Element {
     // Provide the shared store to the whole tree (context = `this`).
     use_context_provider(Store::new);
-    let store = use_context::<Store>();
+    let mut store = use_context::<Store>();
+
+    // First-run setup wizard — show once on first launch (no marker file yet),
+    // and only when the user is unlocked so the password card etc. are usable.
+    use_effect(move || {
+        if *store.unlocked.read() && store.wizard_step.peek().is_none() {
+            if !crate::bindings::setup_done() {
+                store.wizard_step.set(Some(crate::state::WizardStep::Welcome));
+            }
+        }
+    });
 
     // Live-refresh heartbeats. Every screen's data reads one of these ticks, so
     // bumping them re-runs the reads. Fast (250ms) for light row lists + status;
@@ -104,6 +156,10 @@ fn App() -> Element {
                 }
                 // Per-activity detail drawer — overlays everything when a row is clicked.
                 screens::DetailDrawer {}
+                // Always-available "everything Kintsugi can do" reference panel.
+                screens::HelpDrawer {}
+                // First-run setup wizard — shown once until the marker file is written.
+                screens::SetupWizard {}
                 // Transient toast notifications stack (bottom-right).
                 screens::Toasts {}
             }

@@ -254,6 +254,12 @@ enum Command {
         #[command(flatten)]
         filter: FilterArgs,
     },
+    /// Install the desktop Control Room app — finds `kintsugi-control-room` on
+    /// PATH and invokes its `--install` flag (which writes the .app bundle on
+    /// macOS, the .desktop entry + hicolor icons on Linux, or the Programs
+    /// folder + Start-menu shortcut on Windows). Run this after
+    /// `cargo install kintsugi-control-room` for a complete OS install.
+    InstallDesktop,
     /// Manage agent-CLI hooks (claude-code, qwen, gemini, copilot, cursor, codex,
     /// opencode, antigravity). `list` shows detection + install state (JSON with
     /// `--json`), `enable`/`disable` flip one agent's hook.
@@ -611,7 +617,43 @@ fn main() -> Result<()> {
         }) => cmd_report(catastrophic_only, number, &filter),
         Some(Command::Uninstall { purge, yes }) => uninstall::run(purge, yes),
         Some(Command::Hook { cmd }) => cmd_hook(cmd),
+        Some(Command::InstallDesktop) => cmd_install_desktop(),
     }
+}
+
+/// `kintsugi install-desktop` — find the `kintsugi-control-room` binary
+/// (PATH, then ~/.cargo/bin) and invoke its `--install` flag.
+fn cmd_install_desktop() -> Result<()> {
+    let bin = which_kintsugi_control_room().ok_or_else(|| anyhow::anyhow!(
+        "couldn't find the desktop binary `kintsugi-control-room` on PATH.\n\n\
+         Install it first, then re-run this:\n  \
+         cargo install kintsugi-control-room\n  \
+         kintsugi install-desktop\n\n\
+         Or download a prebuilt build from https://github.com/arrowassassin/kintsugi/releases."
+    ))?;
+    println!("kintsugi: running {} --install", bin.display());
+    let status = std::process::Command::new(&bin).arg("--install").status()?;
+    if !status.success() {
+        anyhow::bail!("the desktop installer exited with status {status}");
+    }
+    Ok(())
+}
+
+fn which_kintsugi_control_room() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "kintsugi-control-room.exe" } else { "kintsugi-control-room" };
+    if let Some(paths) = std::env::var_os("PATH") {
+        for d in std::env::split_paths(&paths) {
+            let c = d.join(name);
+            if c.exists() { return Some(c); }
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        for sub in [".cargo/bin", ".local/bin"] {
+            let c = PathBuf::from(&home).join(sub).join(name);
+            if c.exists() { return Some(c); }
+        }
+    }
+    None
 }
 
 /// The on-disk config path Kintsugi writes/strips per agent.
