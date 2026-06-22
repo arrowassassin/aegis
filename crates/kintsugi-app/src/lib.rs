@@ -193,8 +193,13 @@ pub fn verify(db_path: &std::path::Path) -> anyhow::Result<ChainVerify> {
 }
 
 /// The current approval queue, read live from the daemon over IPC.
-pub fn queue() -> anyhow::Result<Vec<QueueRow>> {
-    let items = Client::list_pending()?;
+pub fn queue(db_path: &std::path::Path) -> anyhow::Result<Vec<QueueRow>> {
+    // Read the pending table IN-PROCESS (like every other view), not via the daemon
+    // IPC — so the queue (and its model summary, fetched by EventLog::list_pending's
+    // events join) reflects the on-disk truth and never depends on the running
+    // daemon binary's version. Mutations still go through the daemon.
+    let log = EventLog::open(db_path)?;
+    let items = log.list_pending()?;
     Ok(items
         .into_iter()
         .map(|it| QueueRow {

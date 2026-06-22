@@ -61,7 +61,7 @@ pub fn audit(query: &str, limit: usize) -> Vec<TimelineRow> {
     newest_first(app::audit(&db(), query, limit).unwrap_or_default())
 }
 pub fn queue() -> Vec<QueueRow> {
-    let mut q = app::queue().unwrap_or_default();
+    let mut q = app::queue(&db()).unwrap_or_default();
     q.reverse();
     q
 }
