@@ -46,6 +46,18 @@ fn TimeCell(ts: String) -> Element {
     }
 }
 
+/// The brand mark — renders the SVG inline via `dangerous_inner_html` so it
+/// never depends on the asset protocol. `size` controls the square box.
+#[component]
+pub fn LogoMark(size: u32) -> Element {
+    let svg = crate::LOGO_SVG;
+    rsx! {
+        div { style: "display:inline-block;width:{size}px;height:{size}px;flex:none",
+            dangerous_inner_html: "{svg}",
+        }
+    }
+}
+
 /// First-run setup wizard — four steps that introduce Kintsugi, propose
 /// setting a master password, propose picking a local model, then finish.
 /// All steps are optional (Skip moves on); the user can always set things up
@@ -87,11 +99,11 @@ pub fn SetupWizard() -> Element {
     let step_label = ["Welcome", "Password", "Model", "Done"];
 
     rsx! {
-        div { style: "position:fixed;inset:0;z-index:90;background:rgba(8,10,14,.92);display:flex;align-items:center;justify-content:center;animation:kfade .2s ease;backdrop-filter:blur(6px)",
-            div { style: "width:620px;max-width:94vw;max-height:88vh;overflow-y:auto;background:var(--bg2);border:1px solid var(--gold-line);border-radius:16px;box-shadow:0 40px 100px rgba(0,0,0,.6);padding:0",
+        div { style: "position:fixed;inset:0;z-index:90;background:rgba(8,10,14,.92);display:flex;align-items:center;justify-content:center;animation:kfade .2s ease;backdrop-filter:blur(6px);overflow-y:auto;padding:24px",
+            div { style: "width:620px;max-width:94vw;max-height:calc(100vh - 48px);background:var(--bg2);border:1px solid var(--gold-line);border-radius:16px;box-shadow:0 40px 100px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden",
 
-                // Stepper header — gold pill per step, current is filled.
-                div { style: "display:flex;align-items:center;gap:8px;padding:18px 24px 12px;border-bottom:1px solid var(--hair)",
+                // Stepper header — gold pill per step, current is filled. Pinned.
+                div { style: "flex:none;display:flex;align-items:center;gap:8px;padding:18px 24px 12px;border-bottom:1px solid var(--hair)",
                     span { style: "font-size:14px;font-weight:700;letter-spacing:-.1px", "Welcome to Kintsugi" }
                     div { style: "margin-left:auto;display:flex;align-items:center;gap:7px",
                         for (i, lbl) in step_label.iter().enumerate() {
@@ -121,12 +133,12 @@ pub fn SetupWizard() -> Element {
                     }
                 }
 
-                // Step body.
-                div { style: "padding:24px 28px 12px",
+                // Step body — the one scrollable region.
+                div { style: "flex:1;overflow-y:auto;padding:24px 28px 12px;min-height:0",
                     match step {
                         crate::state::WizardStep::Welcome => rsx! {
                             div { style: "display:flex;flex-direction:column;align-items:center;text-align:center;margin-bottom:10px",
-                                img { src: crate::LOGO, width: "56", height: "56", alt: "Kintsugi" }
+                                LogoMark { size: 56 }
                                 div { style: "font-size:20px;font-weight:700;letter-spacing:-.2px;margin-top:14px", "Local-first guardrails for AI agents" }
                                 div { style: "font-size:13.5px;color:var(--dim);line-height:1.6;margin-top:8px;max-width:480px",
                                     "Kintsugi watches every command your coding agent (Claude, Codex, Cursor, etc.) tries to run. It allows safe ones, holds the ambiguous, and blocks the catastrophic — locally, with a tamper-evident audit log."
@@ -272,8 +284,8 @@ pub fn SetupWizard() -> Element {
                     }
                 }
 
-                // Footer — Skip / Back / Next.
-                div { style: "display:flex;align-items:center;gap:10px;padding:14px 24px 18px;margin-top:8px;border-top:1px solid var(--hair)",
+                // Footer — Skip / Back / Next. Pinned.
+                div { style: "flex:none;display:flex;align-items:center;gap:10px;padding:14px 24px 18px;border-top:1px solid var(--hair);background:var(--bg2)",
                     button { style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--dim);background:transparent;border:none;cursor:pointer",
                         onclick: move |_| dismiss(true),
                         if step_index < 3 { "Skip setup" } else { "Close" }

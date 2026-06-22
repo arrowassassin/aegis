@@ -18,8 +18,9 @@ pub fn Login() -> Element {
 
             div { style: "position:relative;width:380px;max-width:90%",
                 div { style: "text-align:center",
-                    img { src: crate::LOGO, width: "54", height: "54", alt: "Kintsugi",
-                        style: "filter:drop-shadow(0 5px 18px rgba(212,175,55,.32))" }
+                    div { style: "filter:drop-shadow(0 5px 18px rgba(212,175,55,.32))",
+                        crate::components::screens::LogoMark { size: 54 }
+                    }
                     div { style: "font-size:25px;font-weight:700;margin-top:15px;letter-spacing:-.3px", "Kintsugi" }
                     div { style: "font-size:13.5px;color:var(--dim);margin-top:5px", "Enter your master password to unlock" }
                 }

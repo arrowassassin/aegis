@@ -145,7 +145,7 @@ pub fn TitleBar() -> Element {
                     path { d: "M4 6h16M4 12h16M4 18h16" }
                 }
             }
-            img { src: crate::LOGO, width: "18", height: "18", alt: "Kintsugi", style: "display:block" }
+            crate::components::screens::LogoMark { size: 18 }
             span { style: "font-size:12.5px;font-weight:600;letter-spacing:.2px", "Kintsugi" }
             span { style: "font-size:12.5px;color:var(--dim)", "— {title}" }
         }

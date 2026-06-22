@@ -19,6 +19,10 @@ use components::{login::Login, shell::{TitleBar, Sidebar, TopBar}, screens};
 
 pub const LOGO: Asset = asset!("/assets/logo-mark.svg");
 pub const STYLES: Asset = asset!("/assets/styles.css");
+/// The brand SVG inlined at compile time — bulletproof against asset-protocol
+/// quirks in the embedded webview (the `asset!()`-served file was showing a
+/// broken-image placeholder on some macOS builds).
+pub const LOGO_SVG: &str = include_str!("../assets/logo-mark.svg");
 
 /// The 256-px window icon, rasterized from the brand SVG at build time.
 const ICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-256.png"));
@@ -87,8 +91,15 @@ fn main() {
         window = window.with_window_icon(Some(ico));
     }
 
+    // Set the OS window background to our dark bg so the brief "blank" frame on
+    // launch + the area outside our root <div> (e.g. between webview redraws)
+    // doesn't flash white. Matches `--bg` in styles.css.
+    let cfg = Config::default()
+        .with_window(window)
+        .with_background_color((11, 13, 18, 255));
+
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(Config::default().with_window(window))
+        .with_cfg(cfg)
         .launch(App);
 }
 
